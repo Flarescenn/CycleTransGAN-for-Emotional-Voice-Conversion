@@ -1,0 +1,9 @@
+ProgressBar2
+librosa
+FFmpeg 4.0
+PyWorld
+sklearn
+pycwt
+sprocket-vc
+script
+glob
