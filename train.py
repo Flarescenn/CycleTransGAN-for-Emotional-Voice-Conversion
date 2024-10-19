@@ -65,7 +65,7 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
 
     end_time = time.time()
     time_elapsed = end_time - start_time
-    print(f'Preprocessing Done. Time Elapsed: {time_elapsed // 3600:02d}:{(time_elapsed % 3600) // 60:02d}:{(time_elapsed % 60):02d}')
+    print(f'Preprocessing Done. Time Elapsed: {int(time_elapsed) // 3600:02d}:{(int(time_elapsed) % 3600) // 60:02d}:{(int(time_elapsed) % 60):02d}')
 
     # Initialize CycleGAN model
     model = CycleGAN(num_features=num_mcep, log_dir=tensorboard_log_dir + str(n_frames)).to(device)
@@ -111,7 +111,7 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
 
         end_time_epoch = time.time()
         time_elapsed_epoch = end_time_epoch - start_time_epoch
-        print(f'Time Elapsed for This Epoch: {time_elapsed_epoch // 3600:02d}:{(time_elapsed_epoch % 3600) // 60:02d}:{(time_elapsed_epoch % 60):02d}')
+        print(f'Time Elapsed for This Epoch: {int(time_elapsed_epoch) // 3600:02d}:{(int(time_elapsed_epoch) % 3600) // 60:02d}:{(int(time_elapsed_epoch) % 60):02d}')
 
         # Generate validation data every 5 epochs
         if validation_A_dir is not None and epoch % 5 == 0:
