@@ -2,8 +2,9 @@ ProgressBar2
 librosa
 FFmpeg 
 PyWorld
-sklearn
+scikit-learn
 pycwt
-sprocket-vc
 script
 glob
+sprocket-vc
+
