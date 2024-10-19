@@ -1,6 +1,6 @@
 ProgressBar2
 librosa
-FFmpeg 4.0
+FFmpeg 
 PyWorld
 sklearn
 pycwt
