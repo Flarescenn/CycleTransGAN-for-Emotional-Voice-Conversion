@@ -1,41 +1,37 @@
 import torch
 import torch.nn as nn
-import os
-import random
 import numpy as np
 from scipy.interpolate import interp1d
 import pycwt as wavelet
 from scipy.signal import firwin, lfilter
 import matplotlib.pyplot as plt
 from sklearn import preprocessing
-import pywt
-import librosa
-import pyworld
 
 
-# PyTorch L1 Loss
+
 def l1_loss(y, y_hat):
     return torch.mean(torch.abs(y - y_hat))
 
-# PyTorch L2 Loss
 def l2_loss(y, y_hat):
     return torch.mean(torch.square(y - y_hat))
 
-# PyTorch Cross Entropy Loss
 def cross_entropy_loss(logits, labels):
-    loss_fn = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with logits
+    loss_fn = nn.BCEWithLogitsLoss()  # Binary Cross Entropy + Sigmoid Activation
     return loss_fn(logits, labels)
 
 
-# Function to convert continuous F0
 def convert_continuous_f0(f0):
-    """CONVERT F0 TO CONTINUOUS F0
+    """
+    Converts a discrete F0 sequence to a continuous F0 sequence.
+    Takes a discrete F0 sequence and fills in the "zero" F0 values.
 
     Args:
         f0 (ndarray): original f0 sequence with the shape (T)
 
     Return:
-        (ndarray): continuous f0 with the shape (T)
+        A tuple containing:
+      - `uv`: A binary mask indicating voiced (1) and unvoiced (0) frames.
+      - `cont_f0`: continuous F0 sequence with the shape (T)
     """
     # Get uv information as binary
     uv = np.float32(f0 != 0)
@@ -64,7 +60,7 @@ def convert_continuous_f0(f0):
     return uv, cont_f0
 
 
-# Get continuous log-F0
+# Get continuous log-F0 (Normalization purposes)
 def get_cont_lf0(f0, frame_period=5.0):
     uv, cont_f0_lpf = convert_continuous_f0(f0)
     cont_lf0_lpf = np.log(cont_f0_lpf)
@@ -83,7 +79,7 @@ def get_lf0_cwt(lf0):
     return Wavelet_lf0, scales
 
 
-# Inverse Continuous Wavelet Transform
+# Inverse Continuous Wavelet Transform (CWT -> Log F0)
 def inverse_cwt(Wavelet_lf0, scales):
     lf0_rec = np.zeros([Wavelet_lf0.shape[0], len(scales)])
     for i in range(0, len(scales)):
@@ -96,7 +92,7 @@ def inverse_cwt(Wavelet_lf0, scales):
 # Apply low-pass filter
 def low_pass_filter(x, fs, cutoff=70, padding=True):
     """FUNCTION TO APPLY LOW PASS FILTER
-
+        (Removing high-frequency noise.)
     Args:
         x (ndarray): Waveform sequence
         fs (int): Sampling frequency
@@ -139,6 +135,21 @@ def denormalize(Wavelet_lf0_norm, mean, std):
 
 # Normalize and scale a batch of F0 sequences
 def get_lf0_cwt_norm(f0s, mean, std):
+    """
+  Processes a list of F0 sequences and computes their normalized CWT coefficients.
+
+  Args:
+    f0s: A list of F0 sequences.
+    mean: A pre-computed mean for normalization.
+    std: A pre-computed standard deviation for normalization.
+
+  Returns:
+    A tuple containing:
+      - Wavelet_lf0s_norm: A list of normalized CWT coefficients for each F0 sequence.
+      - scaless: A list of scales used for the CWT.
+      - means: A list of means used for normalization.
+      - stds: A list of standard deviations used for normalization.
+    """
     uvs = []
     cont_lf0_lpfs = []
     cont_lf0_lpf_norms = []
