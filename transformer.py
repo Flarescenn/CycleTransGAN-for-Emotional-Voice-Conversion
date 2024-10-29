@@ -2,6 +2,145 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import six
+
+# GELU activation
+def gelu(x):
+    return x * 0.5 * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+
+
+def dropout(input_tensor, dropout_prob):
+    if dropout_prob is None or dropout_prob == 0.0:
+        return input_tensor
+    return F.dropout(input_tensor, p=dropout_prob, training=True)
+
+
+def layer_norm(input_tensor, name=None):
+    layer_norm = nn.LayerNorm(input_tensor.size(-1), eps=1e-12)  #eps = 1e-12 for precision
+    if torch.cuda.is_available():
+        layer_norm = layer_norm.cuda()
+    return layer_norm(input_tensor)
+
+
+def layer_norm_and_dropout(input_tensor, dropout_prob, name=None):
+    """
+    Applies layer normalization followed by dropout to the input tensor.
+    
+    Args:
+    - input_tensor (torch.Tensor): The tensor to normalize and apply dropout to.
+    - dropout_prob (float): Probability of an element to be zeroed.
+    - normalized_shape (int or list of int): Shape for the layer normalization (usually the last dimension size).
+    - name (str, optional): Name for the layer (optional for PyTorch).
+    
+    Returns:
+    - torch.Tensor: The normalized and dropout-applied tensor.
+    """
+    # Apply layer normalization
+    output_tensor = layer_norm(input_tensor, name)
+    # Apply dropout
+    output_tensor = dropout(output_tensor, dropout_prob)
+
+    return output_tensor
+
+
+def assert_rank(tensor, expected_rank, name=None):
+    """
+    Raises ValueError if the tensor rank is not of expected rank. (For validating the rank)
+    """
+    if name is None:
+        name = "tensor"
+        
+    expected_rank_dict = {}
+    if isinstance(expected_rank, six.integer_types):
+        expected_rank_dict[expected_rank] = True
+    else:
+        for x in expected_rank:
+            expected_rank_dict[x] = True
+            
+    actual_rank = len(tensor.size())
+    if actual_rank not in expected_rank_dict:
+        raise ValueError(
+            f"For the tensor `{name}`, the actual rank "
+            f"`{actual_rank}` (shape = {tuple(tensor.size())}) "
+            f"is not equal to the expected rank `{expected_rank}`")
+    
+
+def get_shape_list(tensor, expected_rank=None, name=None):
+    """
+    Returns a list of dimensions of the tensor.
+    """
+    if name is None:
+        name = "tensor" 
+        
+    if expected_rank is not None:
+        assert_rank(tensor, expected_rank, name)
+
+    shape = list(tensor.size())
+    return shape
+
+
+def create_initializer(initializer_range=0.02):
+    """
+    Creates a truncated normal initializer.
+    """
+    def initializer(module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0, std=initializer_range)
+            if isinstance(module, torch.nn.Linear) and module.bias is not None:
+                module.bias.data.zero_()
+    return initializer
+
+
+def reshape_to_matrix(input_tensor):
+    """
+    Reshapes input tensor to a matrix (2D tensor).
+    """
+    ndims = len(input_tensor.size())
+    if ndims < 2:
+        raise ValueError(f"Input tensor must have at least rank 2. Shape = {input_tensor.size()}")
+    if ndims == 2:
+        return input_tensor
+        
+    width = input_tensor.size(-1)
+    output_tensor = input_tensor.view(-1, width)
+    return output_tensor
+
+def reshape_from_matrix(output_tensor, orig_shape_list):
+    """
+    Reshapes a matrix back to its original shape.
+    """
+    if len(orig_shape_list) == 2:
+        return output_tensor
+        
+    width = output_tensor.size(-1)
+    return output_tensor.view(orig_shape_list[:-1] + [width])
+
+
+def create_attention_mask_from_input_mask(from_tensor, to_mask):
+    """
+    Creates 3D attention mask from a 2D tensor mask.
+    """
+    from_shape = get_shape_list(from_tensor, expected_rank=[2, 3])
+    batch_size = from_shape[0]
+    from_seq_length = from_shape[1]
+    
+    to_shape = get_shape_list(to_mask, expected_rank=2)
+    to_seq_length = to_shape[1]
+    
+    # Convert mask to float and add a dimension
+    to_mask = to_mask.float().view(batch_size, 1, to_seq_length)
+    
+    # Create broadcast ones
+    broadcast_ones = torch.ones(
+        batch_size, from_seq_length, 1,
+        dtype=torch.float,
+        device=from_tensor.device)
+        
+    # Create the attention mask
+    mask = broadcast_ones * to_mask
+    
+    return mask
+
 
 class AttentionLayer(nn.Module):
     def __init__(self, num_attention_heads=1, size_per_head=1024, dropout_prob=0.0):
@@ -58,9 +197,7 @@ class AttentionLayer(nn.Module):
         
         return context_layer
 
-# GELU activation
-def gelu(x):
-    return x * 0.5 * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+
 
 class TransformerLayer(nn.Module):
     def __init__(self, hidden_size=1024, num_attention_heads=4, intermediate_size=2048, dropout_prob=0.1):
