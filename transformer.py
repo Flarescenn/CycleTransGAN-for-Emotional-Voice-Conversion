@@ -143,7 +143,7 @@ def create_attention_mask_from_input_mask(from_tensor, to_mask):
 
 
 class AttentionLayer(nn.Module):
-    def __init__(self, num_attention_heads=1, size_per_head=1024, dropout_prob=0.0):
+    def __init__(self, num_attention_heads=1, size_per_head=1024, dropout_prob=0.0, initializer_range=0.02):
         super(AttentionLayer, self).__init__()
         self.num_attention_heads = num_attention_heads
         self.size_per_head = size_per_head
@@ -155,6 +155,11 @@ class AttentionLayer(nn.Module):
         self.value = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
 
         self.dropout = nn.Dropout(dropout_prob)
+
+        # Initialize weights
+        nn.init.normal_(self.query.weight, mean=0.0, std=initializer_range)
+        nn.init.normal_(self.key.weight, mean=0.0, std=initializer_range)
+        nn.init.normal_(self.value.weight, mean=0.0, std=initializer_range)
         
     def transpose_for_scores(self, x, batch_size):
         # Reshaping the input tensor
@@ -198,45 +203,130 @@ class AttentionLayer(nn.Module):
         return context_layer
 
 
+class Transformer(nn.Module):
+    def __init__(self, hidden_size=1024, num_hidden_layers=6, num_attention_heads=4,
+                 intermediate_size=2048, hidden_dropout_prob=0.1, attention_probs_dropout_prob=0.1,
+                 initializer_range=0.02, max_position_embeddings=512, use_position_emb=True):
+        super(Transformer, self).__init__()
+
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.intermediate_size = intermediate_size
+        self.hidden_dropout_prob = hidden_dropout_prob
+        self.attention_probs_dropout_prob = attention_probs_dropout_prob
+        self.initializer_range = initializer_range
+        self.max_position_embeddings = max_position_embeddings
+        self.use_position_emb = use_position_emb
+
+        # Hidden size must be a multiple of num_attention_heads
+        if hidden_size % num_attention_heads != 0:
+            raise ValueError(f"The hidden size ({hidden_size}) is not a multiple of the number of attention heads ({num_attention_heads})")
+
+        self.attention_head_size = int(hidden_size / num_attention_heads)
+        
+        # Position embedding
+        if use_position_emb:
+            self.position_embeddings = nn.Parameter(torch.zeros(max_position_embeddings, hidden_size))
+            nn.init.normal_(self.position_embeddings, mean=0.0, std=self.initializer_range)
+        
+        # Transformer layers
+        self.layers = nn.ModuleList([TransformerLayer(hidden_size, num_attention_heads, 
+                                                      attention_head_size=self.attention_head_size, 
+                                                      intermediate_size=intermediate_size,
+                                                      hidden_dropout_prob=hidden_dropout_prob,
+                                                      attention_probs_dropout_prob=attention_probs_dropout_prob,
+                                                      initializer_range=initializer_range) 
+                                     for _ in range(num_hidden_layers)])
+
+        self.layer_norm = nn.LayerNorm(hidden_size, eps=1e-12)
+
+    def forward(self, input_tensor, attention_mask=None, do_return_all_layers=False):
+        """
+        Applies the Transformer model on the input tensor with optional positional embeddings and attention mask.
+
+        Args:
+            input_tensor: torch.Tensor, shape (batch_size, seq_length, hidden_size)
+            attention_mask: Optional torch.Tensor of shape (batch_size, seq_length)
+            do_return_all_layers: If True, returns the output of each Transformer layer
+
+        Returns:
+            torch.Tensor: Final Transformer output tensor, or all layer outputs if do_return_all_layers is True.
+        """
+        batch_size, seq_length, _ = input_tensor.size()
+
+        # Add positional embeddings if enabled
+        if self.use_position_emb:
+            assert seq_length <= self.max_position_embeddings, "Sequence length exceeds max position embeddings"
+            position_embeddings = self.position_embeddings[:seq_length, :].unsqueeze(0)
+            input_tensor = input_tensor + position_embeddings
+
+        prev_output = self.layer_norm(input_tensor)
+        
+        all_layer_outputs = []
+        
+        # Apply each transformer layer
+        for layer in self.layers:
+            layer_output = layer(prev_output, attention_mask)
+            prev_output = layer_output
+            all_layer_outputs.append(layer_output)
+
+        if do_return_all_layers:
+            return all_layer_outputs
+        else:
+            return all_layer_outputs[-1]
+
 
 class TransformerLayer(nn.Module):
-    def __init__(self, hidden_size=1024, num_attention_heads=4, intermediate_size=2048, dropout_prob=0.1):
+    def __init__(self, hidden_size, num_attention_heads, attention_head_size, intermediate_size, 
+                 hidden_dropout_prob, attention_probs_dropout_prob, initializer_range):
         super(TransformerLayer, self).__init__()
-        self.attention = AttentionLayer(num_attention_heads=num_attention_heads, size_per_head=hidden_size // num_attention_heads, dropout_prob=dropout_prob)
-        
-        # Feed-forward layers
-        self.dense_intermediate = nn.Linear(hidden_size, intermediate_size)
-        self.dense_output = nn.Linear(intermediate_size, hidden_size)
-        
-        self.dropout = nn.Dropout(dropout_prob)
-        self.layernorm_attention = nn.LayerNorm(hidden_size)
-        self.layernorm_output = nn.LayerNorm(hidden_size)
+
+        # Self-attention
+        self.self_attention = AttentionLayer(
+            num_attention_heads=num_attention_heads, size_per_head=attention_head_size, 
+            dropout_prob=attention_probs_dropout_prob
+        )
+        self.attention_output_dense = nn.Linear(hidden_size, hidden_size)
+        nn.init.normal_(self.attention_output_dense.weight, mean=0.0, std=initializer_range)
+        self.attention_dropout = nn.Dropout(hidden_dropout_prob)
+        self.attention_layer_norm = nn.LayerNorm(hidden_size, eps=1e-12)
+
+        # Intermediate layer
+        self.intermediate_dense = nn.Linear(hidden_size, intermediate_size)
+        nn.init.normal_(self.intermediate_dense.weight, mean=0.0, std=initializer_range)
+        self.intermediate_act_fn = F.gelu
+
+        # Output layer
+        self.output_dense = nn.Linear(intermediate_size, hidden_size)
+        nn.init.normal_(self.output_dense.weight, mean=0.0, std=initializer_range)
+        self.output_dropout = nn.Dropout(hidden_dropout_prob)
+        self.output_layer_norm = nn.LayerNorm(hidden_size, eps=1e-12)
 
     def forward(self, hidden_states, attention_mask=None):
-        # Self-attention
-        attention_output = self.attention(hidden_states, hidden_states, attention_mask)
-        attention_output = self.dropout(attention_output)
-        attention_output = self.layernorm_attention(hidden_states + attention_output)
-        
-        # Feed-forward
-        intermediate_output = gelu(self.dense_intermediate(attention_output))
-        layer_output = self.dense_output(intermediate_output)
-        layer_output = self.dropout(layer_output)
-        layer_output = self.layernorm_output(attention_output + layer_output)
-        
+        """
+        Performs forward pass through the transformer layer.
+
+        Args:
+            hidden_states: torch.Tensor of shape (batch_size, seq_length, hidden_size)
+            attention_mask: Optional torch.Tensor of shape (batch_size, seq_length)
+
+        Returns:
+            torch.Tensor: Output tensor from this transformer layer.
+        """
+        # Self-attention layer
+        attention_output = self.self_attention(hidden_states, hidden_states, attention_mask)
+        attention_output = self.attention_output_dense(attention_output)
+        attention_output = self.attention_dropout(attention_output)
+        attention_output = self.attention_layer_norm(attention_output + hidden_states)
+
+        # Intermediate layer
+        intermediate_output = self.intermediate_dense(attention_output)
+        intermediate_output = self.intermediate_act_fn(intermediate_output)
+
+        # Output layer
+        layer_output = self.output_dense(intermediate_output)
+        layer_output = self.output_dropout(layer_output)
+        layer_output = self.output_layer_norm(layer_output + attention_output)
+
         return layer_output
-
-class Transformer(nn.Module):
-    def __init__(self, hidden_size=1024, num_hidden_layers=6, num_attention_heads=4, intermediate_size=2048, dropout_prob=0.1):
-        super(Transformer, self).__init__()
-        self.layers = nn.ModuleList([
-            TransformerLayer(hidden_size, num_attention_heads, intermediate_size, dropout_prob)
-            for _ in range(num_hidden_layers)
-        ])
-
-    def forward(self, input_tensor, attention_mask=None):
-        # Process through each transformer layer
-        for layer in self.layers:
-            input_tensor = layer(input_tensor, attention_mask)
-        
-        return input_tensor
