@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Define the activation function
+
 activation_fuc = F.leaky_relu
 
 def gated_linear_layer(inputs, gates):
