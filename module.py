@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from transformer import *
 activation_fuc = F.leaky_relu
+
+#please note: input here is number of in-channels, and filters is the number of out-channels
 
 def gated_linear_layer(inputs, gates):
     """
@@ -20,15 +22,18 @@ def gated_linear_layer(inputs, gates):
 
 
 class instance_norm_layer(nn.Module):
-    def __init__(self, inputs, epsilon=1e-06, activation=None, name = None):
+    def __init__(self, num_features, epsilon=1e-06, activation=None, name = None, is_2d=True):
         super(instance_norm_layer, self).__init__()
-        self.instance_norm = nn.InstanceNorm1d(inputs, eps=epsilon, affine=False)
+        if is_2d:
+            self.instance_norm = nn.InstanceNorm2d(num_features, eps=epsilon, affine=False)
+        else:
+            self.instance_norm = nn.InstanceNorm1d(num_features, eps=epsilon, affine=False)
         self.activation = activation
 
     def forward(self, inputs):
         x = self.instance_norm(inputs)
-        if self.activation_fn:
-            x = self.activation_fn(x)
+        if self.activation:
+            x = activation_fuc(x)
         return x
     
 
@@ -152,7 +157,7 @@ class residual1d_block(nn.Module):
             name = name_prefix + 'h1conv'
         )
         self.norm1 = instance_norm_layer(
-            inputs=filters,
+            num_features=filters,
             activation=True,
             name=name_prefix + 'h1_norm'
         )
@@ -166,7 +171,7 @@ class residual1d_block(nn.Module):
             name=name_prefix + 'h1_gates'
         )
         self.norm1_gates = instance_norm_layer(
-            inputs=filters,
+            num_features=filters,
             activation=True,
             name=name_prefix + 'h1_norm_gates'
         )
@@ -181,7 +186,7 @@ class residual1d_block(nn.Module):
             name=name_prefix + 'h2_conv'
         )
         self.norm2 = instance_norm_layer(
-            inputs=filters // 2,
+            num_features=filters // 2,
             activation=True,
             name=name_prefix + 'h2_norm'
         )
@@ -216,6 +221,7 @@ class downsample1d_block(nn.Module):
     '''
     def __init__(self, in_channels, filters, kernel_size, strides):
         super(downsample1d_block, self).__init__()
+
         self.conv1 = conv1d_layer(
             inputs=in_channels, 
             filters=filters, 
@@ -224,7 +230,7 @@ class downsample1d_block(nn.Module):
             activation=True  
         )
         self.norm1 = instance_norm_layer(
-            inputs=filters,
+            num_features=filters,
             activation=True,
         )
         self.conv1_gates = conv1d_layer(
@@ -235,7 +241,7 @@ class downsample1d_block(nn.Module):
             activation=True  # for LeakyReLU
         )
         self.norm1_gates = instance_norm_layer(
-            inputs=filters, 
+            num_features=filters, 
             activation=True
         )
 
@@ -273,7 +279,7 @@ class upsample1d_block(nn.Module):
         
         # Instance Normalization for the main path
         self.norm1 = instance_norm_layer(
-            inputs=filters // shuffle_size,
+            num_features=filters // shuffle_size,
             activation=True
         )
         
@@ -287,7 +293,7 @@ class upsample1d_block(nn.Module):
         )
         self.pixel_shuffle_gates = pixel_shuffler(shuffle_size)
         self.norm1_gates = instance_norm_layer(
-            inputs=filters // shuffle_size,
+            num_features=filters // shuffle_size,
             activation=True
         )
 
@@ -306,50 +312,117 @@ class upsample1d_block(nn.Module):
         
         return out
 
-def downsample2d_block(inputs, filters, kernel_size, strides):
-    h1 = conv2d_layer(inputs, filters, kernel_size, strides, activation=activation_fuc)
-    h1_norm = InstanceNormLayer(activation_fn=activation_fuc)(h1)
-    h1_gates = conv2d_layer(inputs, filters, kernel_size, strides, activation=activation_fuc)
-    h1_norm_gates = InstanceNormLayer(activation_fn=activation_fuc)(h1_gates)
-    return gated_linear_layer(h1_norm, h1_norm_gates)
 
-def upsample1d_block(inputs, filters, kernel_size, strides, shuffle_size=2):
-    h1 = conv1d_layer(inputs, filters, kernel_size, strides, activation=activation_fuc)
-    h1_shuffle = pixel_shuffler(h1, shuffle_size)
-    h1_norm = InstanceNormLayer(activation_fn=activation_fuc)(h1_shuffle)
+class downsample2d_block(nn.Module):
+    """
+    2D downsampling block 
+    Architecture:
+        Input → (Conv2D → InstanceNorm2D) ⨁ (Conv2D → InstanceNorm2D) → GLU
+    """
+    def __init__(self, inputs, filters, kernel_size, strides):
+        super(downsample2d_block, self).__init__()
+        #for both the paths as if the code isnt already long enough
+        self.conv2d = conv2d_layer( 
+            inputs= inputs,
+            filters = filters,
+            kernel_size = kernel_size, 
+            strides = strides, 
+            activation=True
+        )
+        self.norm2d = instance_norm_layer(
+            num_features=filters,
+            activation=True,
+            is_2d=True
+        )
 
-    h1_gates = conv1d_layer(inputs, filters, kernel_size, strides, activation=activation_fuc)
-    h1_shuffle_gates = pixel_shuffler(h1_gates, shuffle_size)
-    h1_norm_gates = InstanceNormLayer(activation_fn=activation_fuc)(h1_shuffle_gates)
+    def forward(self, x):
+        # Main Path
+        h1 = self.conv2d(x)
+        h1_norm = self.norm2d(h1)
 
-    return gated_linear_layer(h1_norm, h1_norm_gates)
+        # Gating Path
+        h1_gates = self.conv2d(x)
+        h1_norm_gates = self.norm2d(h1_gates)
 
-class GeneratorGatedCNN(nn.Module):
-    def __init__(self):
-        super(GeneratorGatedCNN, self).__init__()
-        # Define layers here
-        self.conv1 = nn.Conv1d(128, 128, 15, 1)
-        self.downsample1 = downsample1d_block
-        self.residual1 = residual1d_block
-        self.upsample1 = upsample1d_block
-        self.conv_output = nn.Conv1d(512, 24, 15, 1)
+        # Apply GLU
+        out = gated_linear_layer(h1_norm, h1_norm_gates)
+
+        return out
+
+
+
+class generator_gatedcnn(nn.Module):
+    def __init__(self, inputs):
+        super(generator_gatedcnn, self).__init__()
+        # Generator layers defined here
+
+        self.input_transpose = lambda x: x.permute(0, 2, 1)
+        self.h1_conv = conv1d_layer(inputs, filters=128, kernel_size=15, strides=1, activation=True)
+        self.h1_conv_gates = conv1d_layer(inputs, filters=128, kernel_size=15, strides=1, activation=True)
+        
+        self.downsample1 = downsample1d_block(128, filters=256, kernel_size=5, strides=2)
+        self.downsample2 = downsample1d_block(256, filters=512, kernel_size=5, strides=2)
+
+        self.residual1 = residual1d_block(512, filters=1024, kernel_size=3, strides=1)
+        #to implement
+        self.transformer1 = Transformer(
+
+        )
+
+        self.residual2 = residual1d_block(1024, filters=1024, kernel_size=3, strides=1)
+        self.transformer2 = Transformer()
+        #in channels not calculated yet
+        self.upsample1 = upsample1d_block(1024, filters=1024, kernel_size=5, strides=1, shuffle_size=2)
+        self.upsample2 = upsample1d_block(1024, filters=512, kernel_size=5, strides=1, shuffle_size=2)
+
+        self.output_conv = conv1d_layer(512, filters=24, kernel_size=15, strides=1)
+        self.output_transpose = lambda x: x.permute(0, 2, 1)
 
     def forward(self, inputs):
-        inputs = inputs.transpose(1, 2)
-        h1 = self.conv1(inputs)
-        h1_glu = gated_linear_layer(h1, h1)
-        d1 = self.downsample1(h1_glu, 256, 5, 2)
-        r1 = self.residual1(d1, 1024, 3, 1)
-        # Transformer layer would go here
-        u1 = self.upsample1(r1, 512, 5, 1, 2)
-        o1 = self.conv_output(u1)
-        return o1.transpose(1, 2)
+        
+        x = self.input_transpose(inputs)
+
+        batch_size, seq_length, _ = x.shape
+        input_mask = torch.ones(batch_size, seq_length, dtype=torch.int32, device=x.device)
+        attention_mask = create_attention_mask_from_input_mask(x, input_mask)
+
+        # First conv and gated linear unit
+        h1 = self.h1_conv(x)
+        h1_gates = self.h1_conv_gates(x)
+        h1_glu = self.h1_glu(h1, h1_gates)
+
+        # Downsampling
+        d1 = self.downsample1(h1_glu)
+        d2 = self.downsample2(d1)
+        
+        # Residual blocks with transformers
+        r1 = self.residual1(d2)
+        r1 = self.transformer1(r1)
+
+        r2 = self.residual2(r1)
+        r2 = self.transformer2(r2)
+        
+        # Upsampling
+        u1 = self.upsample1(r2)
+        u2 = self.upsample2(u1)
+        
+        # Final convolution and output transpose
+        o1 = self.output_conv(u2)
+        o2 = self.output_transpose(o1)
+        
+        return o2
 
 class Discriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, inputs):
         super(Discriminator, self).__init__()
-        self.conv1 = nn.Conv2d(1, 128, kernel_size=(3, 3), stride=(1, 2))
-        self.dense = nn.Linear(1024, 1)
+        self.h1_conv = conv2d_layer(inputs, filters=128, kernel_size=[3,3], strides=[1,2], activation=True)
+        self.h1_conv_gates = conv2d_layer(inputs, filters=128, kernel_size=[3,3], strides=[1,2], activation=True)
+        
+        self.downsample1 = downsample2d_block(128, filters=256, kernel_size=[3,3], strides=[2,2])
+        self.downsample2 = downsample2d_block(256, filters=512, kernel_size=[3,3], strides=[2,2])
+        self.downsample3 = downsample2d_block(512, filters=1024, kernel_size=[6,3], strides=[1,2])
+
+
 
     def forward(self, inputs):
         inputs = inputs.unsqueeze(1)
