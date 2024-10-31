@@ -366,51 +366,72 @@ class generator_gatedcnn(nn.Module):
         self.residual1 = residual1d_block(512, filters=1024, kernel_size=3, strides=1)
         #to implement
         self.transformer1 = Transformer(
-
+            hidden_size=1024,  # Match the residual block output size
+            num_hidden_layers=6,
+            num_attention_heads=8,
+            intermediate_size=2048,
+            hidden_dropout_prob=0.1,
+            attention_probs_dropout_prob=0.1,
+            max_position_embeddings=512  # Adjust based on your sequence length
         )
 
+        # Second residual block takes 1024 channels from transformer1
         self.residual2 = residual1d_block(1024, filters=1024, kernel_size=3, strides=1)
-        self.transformer2 = Transformer()
-        #in channels not calculated yet
-        self.upsample1 = upsample1d_block(1024, filters=1024, kernel_size=5, strides=1, shuffle_size=2)
-        self.upsample2 = upsample1d_block(1024, filters=512, kernel_size=5, strides=1, shuffle_size=2)
+        
+        # Second transformer with same configuration
+        self.transformer2 = Transformer(
+            hidden_size=1024,  # Match the residual block output size
+            num_hidden_layers=6,
+            num_attention_heads=8,
+            intermediate_size=2048,
+            hidden_dropout_prob=0.1,
+            attention_probs_dropout_prob=0.1,
+            max_position_embeddings=512  # Adjust based on your sequence length
+        )
 
-        self.output_conv = conv1d_layer(512, filters=24, kernel_size=15, strides=1)
+        # Upsampling blocks - input channels are correct as 1024
+        self.upsample1 = upsample1d_block(1024, filters=1024, kernel_size=5, strides=1, shuffle_size=2)
+        # Input channels for upsample2 should be 512 (1024/2 due to pixel shuffler in upsample1)
+        self.upsample2 = upsample1d_block(512, filters=512, kernel_size=5, strides=1, shuffle_size=2)
+
+        # Output conv takes 256 channels (512/2 due to pixel shuffler in upsample2)
+        self.output_conv = conv1d_layer(256, filters=24, kernel_size=15, strides=1)
         self.output_transpose = lambda x: x.permute(0, 2, 1)
 
     def forward(self, inputs):
-        
-        x = self.input_transpose(inputs)
+    x = self.input_transpose(inputs)
+    
+    batch_size, seq_length, _ = x.shape
+    input_mask = torch.ones(batch_size, seq_length, dtype=torch.int32, device=x.device)
+    attention_mask = create_attention_mask_from_input_mask(x, input_mask)
 
-        batch_size, seq_length, _ = x.shape
-        input_mask = torch.ones(batch_size, seq_length, dtype=torch.int32, device=x.device)
-        attention_mask = create_attention_mask_from_input_mask(x, input_mask)
+    # First conv and gated linear unit
+    h1 = self.h1_conv(x)
+    h1_gates = self.h1_conv_gates(x)
+    h1_glu = gated_linear_layer(h1, h1_gates)
 
-        # First conv and gated linear unit
-        h1 = self.h1_conv(x)
-        h1_gates = self.h1_conv_gates(x)
-        h1_glu = self.h1_glu(h1, h1_gates)
+    # Downsampling
+    d1 = self.downsample1(h1_glu)
+    d2 = self.downsample2(d1)
+    
+    # Residual blocks with transformers
+    r1 = self.residual1(d2)
+    # Pass through transformer1 with attention mask
+    t1 = self.transformer1(r1, attention_mask)
 
-        # Downsampling
-        d1 = self.downsample1(h1_glu)
-        d2 = self.downsample2(d1)
-        
-        # Residual blocks with transformers
-        r1 = self.residual1(d2)
-        r1 = self.transformer1(r1)
-
-        r2 = self.residual2(r1)
-        r2 = self.transformer2(r2)
-        
-        # Upsampling
-        u1 = self.upsample1(r2)
-        u2 = self.upsample2(u1)
-        
-        # Final convolution and output transpose
-        o1 = self.output_conv(u2)
-        o2 = self.output_transpose(o1)
-        
-        return o2
+    r2 = self.residual2(t1)
+    # Pass through transformer2 with attention mask
+    t2 = self.transformer2(r2, attention_mask)
+    
+    # Upsampling
+    u1 = self.upsample1(t2)
+    u2 = self.upsample2(u1)
+    
+    # Final convolution and output transpose
+    o1 = self.output_conv(u2)
+    o2 = self.output_transpose(o1)
+    
+    return o2
 
 class Discriminator(nn.Module):
     def __init__(self, inputs):
