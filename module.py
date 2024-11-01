@@ -431,23 +431,45 @@ class generator_gatedcnn(nn.Module):
         
         return o2
 
-class Discriminator(nn.Module):
+
+class discriminator(nn.Module):
     def __init__(self, inputs):
-        super(Discriminator, self).__init__()
-        self.h1_conv = conv2d_layer(inputs, filters=128, kernel_size=[3,3], strides=[1,2], activation=True)
-        self.h1_conv_gates = conv2d_layer(inputs, filters=128, kernel_size=[3,3], strides=[1,2], activation=True)
+        super(discriminator, self).__init__()
         
-        self.downsample1 = downsample2d_block(128, filters=256, kernel_size=[3,3], strides=[2,2])
-        self.downsample2 = downsample2d_block(256, filters=512, kernel_size=[3,3], strides=[2,2])
-        self.downsample3 = downsample2d_block(512, filters=1024, kernel_size=[6,3], strides=[1,2])
+    
+        self.input_expand = lambda x: x.unsqueeze(2)
+        
+        self.h1_conv = conv2d_layer(inputs, filters=128, kernel_size=(3, 3), strides=(1, 2), activation=True)
+        self.h1_conv_gates = conv2d_layer(inputs, filters=128, kernel_size=(3, 3), strides=(1, 2), activation=True)
+        
+        # Downsample blocks
+        self.downsample1 = downsample2d_block(128, filters=256, kernel_size=(3, 3), strides=(2, 2))
+        self.downsample2 = downsample2d_block(256, filters=512, kernel_size=(3, 3), strides=(2, 2))
+        self.downsample3 = downsample2d_block(512, filters=1024, kernel_size=(3, 4), strides=(1, 8))
+        
+        # Output dense layer
+        self.output_dense = nn.Linear(2048, 1)
+        self.output_activation = nn.Sigmoid()
+        
+        # self.output_dense = nn.Linear(8192, 1) 
+        # self.output_activation = nn.Sigmoid()
 
+    def forward(self, inputs):
+        
+        x = self.input_expand(inputs)        
+        h1 = self.h1_conv(x)      
+        h1_gates = self.h1_conv_gates(x)
+        h1_glu = gated_linear_layer(h1, h1_gates)
+        d1 = self.downsample1(h1_glu)
+        
+        d2 = self.downsample2(d1)        
+        d3 = self.downsample3(d2)
 
+        d3_flat = d3.view(d3.size(0), -1) 
+        
+        o1 = self.output_dense(d3_flat)
+        o1 = self.output_activation(o1)
+        print(f"Final output shape: {o1.shape}")
 
-    '''def forward(self, inputs):
-        inputs = inputs.unsqueeze(1)
-        h1 = self.conv1(inputs)
-        h1_glu = gated_linear_layer(h1, h1)
-        # Downsample steps go here
-        d1 = downsample2d_block(h1_glu, 256, (3, 3), (2, 2))
-        o1 = torch.sigmoid(self.dense(d1))
-        return o1'''
+        return o1
+
