@@ -365,7 +365,7 @@ class generator_gatedcnn(nn.Module):
 
         self.residual1 = residual1d_block(512, filters=1024, kernel_size=3, strides=1)
         #to implement
-        self.transformer1 = Transformer(
+        self.transformer1 = Transformer(512, 
 
         )
 
@@ -424,11 +424,11 @@ class Discriminator(nn.Module):
 
 
 
-    def forward(self, inputs):
+    '''def forward(self, inputs):
         inputs = inputs.unsqueeze(1)
         h1 = self.conv1(inputs)
         h1_glu = gated_linear_layer(h1, h1)
         # Downsample steps go here
         d1 = downsample2d_block(h1_glu, 256, (3, 3), (2, 2))
         o1 = torch.sigmoid(self.dense(d1))
-        return o1
+        return o1'''
