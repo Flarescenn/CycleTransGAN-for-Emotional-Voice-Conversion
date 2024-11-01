@@ -31,7 +31,7 @@ class GeneratorGatedCNN(nn.Module):
         o2 = o1.permute(0, 2, 1)
 
         return o2
-
+#class _discriminator
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()

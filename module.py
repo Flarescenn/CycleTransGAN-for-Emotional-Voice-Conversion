@@ -66,11 +66,11 @@ class conv1d_layer(nn.Module):
 
         self.activation = activation
 
-        def forward(self, x):
-            out = self.conv(x)
-            if self.activation:
-                out = activation_fuc(out)
-            return out
+    def forward(self, x):
+        out = self.conv(x)
+        if self.activation:
+            out = activation_fuc(out)
+        return out
         
 class conv2d_layer(nn.Module):
     def __init__(
@@ -103,11 +103,11 @@ class conv2d_layer(nn.Module):
 
         self.activation = activation
 
-        def forward(self, x):
-            out = self.conv(x)
-            if self.activation:
-                out = activation_fuc(out)
-            return out
+    def forward(self, x):
+        out = self.conv(x)
+        if self.activation:
+            out = activation_fuc(out)
+        return out
         
             
 class pixel_shuffler(nn.Module):
@@ -363,19 +363,36 @@ class generator_gatedcnn(nn.Module):
         self.downsample1 = downsample1d_block(128, filters=256, kernel_size=5, strides=2)
         self.downsample2 = downsample1d_block(256, filters=512, kernel_size=5, strides=2)
 
-        self.residual1 = residual1d_block(512, filters=1024, kernel_size=3, strides=1)
+        self.residual1 = residual1d_block(512, filters=1024, kernel_size=3, strides=1) #returns 512 channels
         #to implement
-        self.transformer1 = Transformer(512, 
+        '''self.transformer1 = Transformer(
+            hidden_size=512, 
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            intermediate_size=1024,
+            #intermediate_act_fn=gelu, (already defined in the transformer)
+            hidden_dropout_prob=0.1,
+            attention_probs_dropout_prob=0.1,
+            max_position_embeddings=1024 
+        )       #returns 512'''
 
-        )
+        self.residual2 = residual1d_block(512, filters=1024, kernel_size=3, strides=1)  #returns 512
+        '''self.transformer2 = Transformer(
+            hidden_size=512, 
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            intermediate_size=1024,
+            #intermediate_act_fn=gelu, 
+            hidden_dropout_prob=0.1,
+            attention_probs_dropout_prob=0.1,
+            max_position_embeddings=1024 
+        )       #returns 512'''
 
-        self.residual2 = residual1d_block(1024, filters=1024, kernel_size=3, strides=1)
-        self.transformer2 = Transformer()
         #in channels not calculated yet
-        self.upsample1 = upsample1d_block(1024, filters=1024, kernel_size=5, strides=1, shuffle_size=2)
-        self.upsample2 = upsample1d_block(1024, filters=512, kernel_size=5, strides=1, shuffle_size=2)
+        self.upsample1 = upsample1d_block(512, filters=1024, kernel_size=5, strides=1, shuffle_size=2)
+        self.upsample2 = upsample1d_block(2048, filters=512, kernel_size=5, strides=1, shuffle_size=2)
 
-        self.output_conv = conv1d_layer(512, filters=24, kernel_size=15, strides=1)
+        self.output_conv = conv1d_layer(1024, filters=24, kernel_size=15, strides=1)
         self.output_transpose = lambda x: x.permute(0, 2, 1)
 
     def forward(self, inputs):
@@ -389,7 +406,7 @@ class generator_gatedcnn(nn.Module):
         # First conv and gated linear unit
         h1 = self.h1_conv(x)
         h1_gates = self.h1_conv_gates(x)
-        h1_glu = self.h1_glu(h1, h1_gates)
+        h1_glu = gated_linear_layer(h1, h1_gates)
 
         # Downsampling
         d1 = self.downsample1(h1_glu)
@@ -397,11 +414,13 @@ class generator_gatedcnn(nn.Module):
         
         # Residual blocks with transformers
         r1 = self.residual1(d2)
-        r1 = self.transformer1(r1)
+        #t1 = self.transformer1(r1, attention_mask)
+        
 
         r2 = self.residual2(r1)
-        r2 = self.transformer2(r2)
+        #t2 = self.transformer2(r2, attention_mask)
         
+
         # Upsampling
         u1 = self.upsample1(r2)
         u2 = self.upsample2(u1)
