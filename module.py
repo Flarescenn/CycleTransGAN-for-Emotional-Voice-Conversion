@@ -449,13 +449,12 @@ class discriminator(nn.Module):
         
         # Output dense layer
         self.output_dense = nn.Linear(2048, 1)
+        # self.output_dense = nn.Linear(8192, 1)
         self.output_activation = nn.Sigmoid()
         
-        # self.output_dense = nn.Linear(8192, 1) 
-        # self.output_activation = nn.Sigmoid()
-
-    def forward(self, inputs):
         
+    def forward(self, inputs):
+
         x = self.input_expand(inputs)        
         h1 = self.h1_conv(x)      
         h1_gates = self.h1_conv_gates(x)
