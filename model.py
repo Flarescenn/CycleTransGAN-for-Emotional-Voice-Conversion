@@ -29,7 +29,7 @@ class CycleGAN:
         #self.optimizer_initializer()
 
         if self.mode == 'train':
-            self.train_step = 0
+            self.step_count = 0
             now = datetime.now()
             self.log_dir = os.path.join(log_dir, now.strftime('%Y%m%d-%H%M%S'))
             from torch.utils.tensorboard import SummaryWriter
@@ -138,15 +138,15 @@ class CycleGAN:
         
         # Log losses
         if self.mode == 'train':
-            self.writer.add_scalar('Generator/Total', generator_loss.item(), self.train_step)
-            self.writer.add_scalar('Generator/A2B', self.generator_loss_A2B.item(), self.train_step)
-            self.writer.add_scalar('Generator/B2A', self.generator_loss_B2A.item(), self.train_step)
-            self.writer.add_scalar('Generator/Cycle', self.cycle_loss.item(), self.train_step)
-            self.writer.add_scalar('Generator/Identity', self.identity_loss.item(), self.train_step)
-            self.writer.add_scalar('Discriminator/Total', discriminator_loss.item(), self.train_step)
-            self.writer.add_scalar('Discriminator/A', self.discriminator_loss_A.item(), self.train_step)
-            self.writer.add_scalar('Discriminator/B', self.discriminator_loss_B.item(), self.train_step)
-            self.train_step += 1
+            self.writer.add_scalar('Generator/Total', generator_loss.item(), self.step_count)
+            self.writer.add_scalar('Generator/A2B', self.generator_loss_A2B.item(), self.step_count)
+            self.writer.add_scalar('Generator/B2A', self.generator_loss_B2A.item(), self.step_count)
+            self.writer.add_scalar('Generator/Cycle', self.cycle_loss.item(), self.step_count)
+            self.writer.add_scalar('Generator/Identity', self.identity_loss.item(), self.step_count)
+            self.writer.add_scalar('Discriminator/Total', discriminator_loss.item(), self.step_count)
+            self.writer.add_scalar('Discriminator/A', self.discriminator_loss_A.item(), self.step_count)
+            self.writer.add_scalar('Discriminator/B', self.discriminator_loss_B.item(), self.step_count)
+            self.step_count += 1
             
         return generator_loss.item(), discriminator_loss.item()
     
@@ -170,7 +170,7 @@ class CycleGAN:
             'generator_B2A_state_dict': self.generator_B2A.state_dict(),
             'discriminator_A_state_dict': self.discriminator_A.state_dict(),
             'discriminator_B_state_dict': self.discriminator_B.state_dict(),
-            'train_step': self.train_step if self.mode == 'train' else 0
+            'step_count': self.step_count if self.mode == 'train' else 0  
         }, filepath)
         return filepath
 
@@ -181,7 +181,7 @@ class CycleGAN:
         self.discriminator_A.load_state_dict(checkpoint['discriminator_A_state_dict'])
         self.discriminator_B.load_state_dict(checkpoint['discriminator_B_state_dict'])
         if self.mode == 'train':
-            self.train_step = checkpoint['train_step']
+            self.train_step = checkpoint['step_count']
 
 if __name__ == '__main__':
     model = CycleGAN(num_features=24, discriminator=discriminator, generator=generator_gatedcnn)

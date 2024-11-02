@@ -8,15 +8,39 @@ from preprocess import *
 from model import CycleGAN
 import torch
 import pyworld as pw
+from torch.utils.data import Dataset, DataLoader
+from datetime import datetime
+
+class VoiceDataset(Dataset):
+    def __init__(self, coded_sps_A_norm, coded_sps_B_norm, n_frames=128):
+        self.coded_sps_A_norm = coded_sps_A_norm
+        self.coded_sps_B_norm = coded_sps_B_norm
+        self.n_frames = n_frames
+        
+    def __len__(self):
+        return min(len(self.coded_sps_A_norm), len(self.coded_sps_B_norm))
+    
+    def __getitem__(self, idx):
+        start_A = np.random.randint(0, self.coded_sps_A_norm[idx].shape[1] - self.n_frames + 1)
+        start_B = np.random.randint(0, self.coded_sps_B_norm[idx].shape[1] - self.n_frames + 1)
+        
+        end_A = start_A + self.n_frames
+        end_B = start_B + self.n_frames
+        
+        return (torch.FloatTensor(self.coded_sps_A_norm[idx][:, start_A:end_A]), 
+                torch.FloatTensor(self.coded_sps_B_norm[idx][:, start_B:end_B]))
 
 def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validation_A_dir, validation_B_dir, output_dir, tensorboard_log_dir, n_frames):
     
-    np.random.seed(random_seed)
+    # Set random seeds for reproducibility
     torch.manual_seed(random_seed)
+    np.random.seed(random_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(random_seed)
 
     # Hyperparameters
     num_epochs = 500
-    mini_batch_size = 1  # mini_batch_size = 1 is preferred for CycleGAN
+    mini_batch_size = 1  
     generator_learning_rate = 0.0002
     generator_learning_rate_decay = generator_learning_rate / 5000000
     discriminator_learning_rate = 0.0001
@@ -27,8 +51,7 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
     lambda_cycle = 10
     lambda_identity = 5
 
-    # GPU setup
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
 
     print('Preprocessing Data...')
 
@@ -44,8 +67,10 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
     log_f0s_mean_A, log_f0s_std_A = logf0_statistics(f0s_A)
     log_f0s_mean_B, log_f0s_std_B = logf0_statistics(f0s_B)
 
-    print(f'Log Pitch A - Mean: {log_f0s_mean_A}, Std: {log_f0s_std_A}')
-    print(f'Log Pitch B - Mean: {log_f0s_mean_B}, Std: {log_f0s_std_B}')
+    print('Log Pitch A')
+    print('Mean: %f, Std: %f' % (log_f0s_mean_A, log_f0s_std_A))
+    print('Log Pitch B')
+    print('Mean: %f, Std: %f' % (log_f0s_mean_B, log_f0s_std_B))     
 
     coded_sps_A_transposed = transpose_in_list(lst=coded_sps_A)
     coded_sps_B_transposed = transpose_in_list(lst=coded_sps_B)
@@ -71,7 +96,9 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
     model = CycleGAN(num_features=num_mcep, log_dir=tensorboard_log_dir + str(n_frames)).to(device)
     if n_frames != 128:
         model.load(os.path.join(model_dir, model_name))
-
+    # Create dataset and dataloader
+    dataset = VoiceDataset(coded_sps_A_norm, coded_sps_B_norm, n_frames=n_frames)
+    dataloader = DataLoader(dataset, batch_size=mini_batch_size, shuffle=True, num_workers=2)
     for epoch in range(num_epochs):
         print(f'Epoch: {epoch}')
 
@@ -80,32 +107,32 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
         # Sample training data
         dataset_A, dataset_B = sample_train_data(dataset_A=coded_sps_A_norm, dataset_B=coded_sps_B_norm, n_frames=n_frames)
         n_samples = dataset_A.shape[0]
+ # Training loop
+    for epoch in range(num_epochs):
+        print('Epoch: %d' % epoch)
+        start_time_epoch = time.time()
 
-        for i in range(n_samples // mini_batch_size):
-            num_iterations = n_samples // mini_batch_size * epoch + i
+        for i, (real_A, real_B) in enumerate(dataloader):
+            num_iterations = len(dataloader) * epoch + i
 
-            # Adjust learning rates after certain iterations
             if num_iterations > 100000:
                 lambda_identity = 0.5
             if num_iterations > 100000:
                 generator_learning_rate = max(0.00001, generator_learning_rate - generator_learning_rate_decay)
                 discriminator_learning_rate = max(0.00001, discriminator_learning_rate - discriminator_learning_rate_decay)
 
-            start = i * mini_batch_size
-            end = (i + 1) * mini_batch_size
-
-            # Train model
-            generator_loss, discriminator_loss = model.train(
-                input_A=torch.tensor(dataset_A[start:end], dtype=torch.float32).to(device),
-                input_B=torch.tensor(dataset_B[start:end], dtype=torch.float32).to(device),
+            generator_loss, discriminator_loss = model.train_step(
+                real_A, real_B,
                 lambda_cycle=lambda_cycle,
                 lambda_identity=lambda_identity,
-                generator_lr=generator_learning_rate,
-                discriminator_lr=discriminator_learning_rate
+                generator_learning_rate=generator_learning_rate,
+                discriminator_learning_rate=discriminator_learning_rate
             )
 
             if i % 200 == 0:
-                print(f'Iteration: {num_iterations:07d}, Generator LR: {generator_learning_rate:.7f}, Discriminator LR: {discriminator_learning_rate:.7f}, Generator Loss: {generator_loss:.6f}, Discriminator Loss: {discriminator_loss:.6f}')
+                print('Iteration: {:07d}, Generator Learning Rate: {:.7f}, Discriminator Learning Rate: {:.7f}, '
+                      'Generator Loss : {:.6f}, Discriminator Loss : {:.6f}'.format(
+                    num_iterations, generator_learning_rate, discriminator_learning_rate, generator_loss, discriminator_loss))
 
         model.save(directory=model_dir, filename=f'{n_frames}_{model_name}')
 

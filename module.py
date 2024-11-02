@@ -113,17 +113,17 @@ class conv2d_layer(nn.Module):
 class pixel_shuffler(nn.Module):
     """
     Pixel Shuffling (Sub-Pixel Convolution)
-    Tensor of shape (N, W, C) ---> Tensor of Shape (N, W*r, C/r)
+    Tensor of shape (N, C, W) ---> Tensor of Shape (N, C/r, W*r)
     For upsampling.
 
     Args: 
         shuffle_size (int): The factor by which to increase the temporal dimension
     Shape:
-        - Input: (N, W, C) where
+        - Input: (N, C, W) where
             * N is the batch size
             * W is the width
             * C is the number of channels (must be divisible by shuffle_size)
-        - Output: (N, W*shuffle_size, C/shuffle_size)
+        - Output: (N, C/shuffle_size, W*shuffle_size)
     """
     def __init__(self, shuffle_size=2):
         super(pixel_shuffler, self).__init__()
@@ -131,13 +131,13 @@ class pixel_shuffler(nn.Module):
     
     def forward(self, x):
         N = x.size(0)
-        W = x.size(1)
-        C = x.size(2)
+        W = x.size(2)
+        C = x.size(1)
 
         out_channels = C// self.shuffle_size
         out_width = W * self.shuffle_size
 
-        return x.reshape(N, out_width, out_channels)
+        return x.reshape(N, out_channels, out_width)
 
 
 class residual1d_block(nn.Module):
@@ -397,8 +397,8 @@ class generator_gatedcnn(nn.Module):
 
     def forward(self, inputs):
         
-        x = self.input_transpose(inputs)
-
+        #x = self.input_transpose(inputs)
+        x = inputs
         batch_size, seq_length, _ = x.shape
         input_mask = torch.ones(batch_size, seq_length, dtype=torch.int32, device=x.device)
         attention_mask = create_attention_mask_from_input_mask(x, input_mask)
@@ -427,9 +427,9 @@ class generator_gatedcnn(nn.Module):
         
         # Final convolution and output transpose
         o1 = self.output_conv(u2)
-        o2 = self.output_transpose(o1)
+        #o2 = self.output_transpose(o1)
         
-        return o2
+        return o1
 
 
 class discriminator(nn.Module):
@@ -452,7 +452,7 @@ class discriminator(nn.Module):
         # self.output_dense = nn.Linear(8192, 1)
         self.output_activation = nn.Sigmoid()
         
-        
+
     def forward(self, inputs):
 
         x = self.input_expand(inputs)        
