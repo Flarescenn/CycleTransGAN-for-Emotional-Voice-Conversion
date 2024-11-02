@@ -390,9 +390,9 @@ class generator_gatedcnn(nn.Module):
 
         #in channels not calculated yet
         self.upsample1 = upsample1d_block(512, filters=1024, kernel_size=5, strides=1, shuffle_size=2)
-        self.upsample2 = upsample1d_block(2048, filters=512, kernel_size=5, strides=1, shuffle_size=2)
+        self.upsample2 = upsample1d_block(512, filters=512, kernel_size=5, strides=1, shuffle_size=2)
 
-        self.output_conv = conv1d_layer(1024, filters=24, kernel_size=15, strides=1)
+        self.output_conv = conv1d_layer(256, filters=24, kernel_size=15, strides=1)
         self.output_transpose = lambda x: x.permute(0, 2, 1)
 
     def forward(self, inputs):
