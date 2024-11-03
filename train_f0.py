@@ -38,10 +38,10 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
     
     num_epochs = 6800
     mini_batch_size = 1
-    generator_lr = 0.0001
-    generator_lr_decay = generator_lr / 10000000
-    discriminator_lr = 0.001
-    discriminator_lr_decay = discriminator_lr / 10000000
+    generator_learning_rate = 0.0001
+    generator_learning_rate_decay = generator_learning_rate / 10000000
+    discriminator_learning_rate = 0.001
+    discriminator_learning_rate_decay = discriminator_learning_rate / 10000000
     sampling_rate = 24000
     num_mcep = 24
     num_scale = 10
@@ -141,9 +141,9 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
                 lambda_identity = 0.5
             if current_iteration > 20000:
                 generator_learning_rate = max(0.00001, 
-                    generator_learning_rate - generator_lr_decay)
+                    generator_learning_rate - generator_learning_rate_decay)
                 discriminator_learning_rate = max(0.00001, 
-                    discriminator_learning_rate - discriminator_lr_decay)
+                    discriminator_learning_rate - discriminator_learning_rate_decay)
 
             # Train step
             generator_loss, discriminator_loss = model.train_step(

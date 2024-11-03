@@ -122,7 +122,7 @@ class discriminator(nn.Module):
         self.downsample3 = downsample1d_block(256, filters=512, kernel_size=6, strides=4)
         self.downsample4 = downsample1d_block(512, filters=512, kernel_size=6, strides=4)
         # Final dense layer
-        self.output_dense = nn.Linear(1024, 1)  
+        self.output_dense = nn.Linear(4096, 1)  
 
     def forward(self, inputs):
         #x = self.input_transpose(inputs)  
