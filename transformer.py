@@ -116,192 +116,173 @@ def reshape_from_matrix(output_tensor, orig_shape_list):
     return output_tensor.view(orig_shape_list[:-1] + [width])
 
 
-def create_attention_mask_from_input_mask(from_tensor, to_mask):
-    """
-    Creates 3D attention mask from a 2D tensor mask.
-    """
-    from_shape = get_shape_list(from_tensor, expected_rank=[2, 3])
-    batch_size = from_shape[0]
-    from_seq_length = from_shape[1]
-    
-    to_shape = get_shape_list(to_mask, expected_rank=2)
-    to_seq_length = to_shape[1]
-    
-    # Convert mask to float and add a dimension
-    to_mask = to_mask.float().view(batch_size, 1, to_seq_length)
-    
-    # Create broadcast ones
-    broadcast_ones = torch.ones(
-        batch_size, from_seq_length, 1,
-        dtype=torch.float,
-        device=from_tensor.device)
+'''def create_attention_mask(from_tensor, to_mask):
+        """
+        Creates 3D attention mask from a 2D tensor mask.
+        """
+        from_shape = get_shape_list(from_tensor, expected_rank=[2, 3])
+        batch_size = from_shape[0]
+        from_seq_length = from_shape[1]
         
-    # Create the attention mask
-    mask = broadcast_ones * to_mask
+        to_shape = get_shape_list(to_mask, expected_rank=2)
+        to_seq_length = to_shape[1]
+        
+        # Convert mask to float and add a dimension
+        to_mask = to_mask.float().view(batch_size, 1, to_seq_length)
+        
+        # Create broadcast ones
+        broadcast_ones = torch.ones(
+            batch_size, from_seq_length, 1,
+            dtype=torch.float,
+            device=from_tensor.device)
+            
+        # Create the attention mask
+        mask = broadcast_ones * to_mask
+        
+        return mask'''
+def create_attention_mask(from_tensor, to_mask):
+    
+    batch_size, from_seq_length, _ = from_tensor.size()
+    to_seq_length = to_mask.size(1)
+    mask = to_mask.unsqueeze(1).expand(batch_size, from_seq_length, to_seq_length)
     
     return mask
 
-
 class AttentionLayer(nn.Module):
-    def __init__(self, num_attention_heads=1, size_per_head=1024, dropout_prob=0.0, initializer_range=0.02):
-        super(AttentionLayer, self).__init__()
+    def __init__(self, hidden_size, num_attention_heads, attention_probs_dropout_prob=0.1):
+        super().__init__()
         self.num_attention_heads = num_attention_heads
-        self.size_per_head = size_per_head
-        self.dropout_prob = dropout_prob
+        self.attention_head_size = int(hidden_size / num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
         
-        # linear layers for query, key, value
-        self.query = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
-        self.key = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
-        self.value = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
+        # Create query, key, value projections
+        self.query = nn.Linear(hidden_size, self.all_head_size)
+        self.key = nn.Linear(hidden_size, self.all_head_size)
+        self.value = nn.Linear(hidden_size, self.all_head_size)
 
-        self.dropout = nn.Dropout(dropout_prob)
-
-        # Initialize weights
-        nn.init.normal_(self.query.weight, mean=0.0, std=initializer_range)
-        nn.init.normal_(self.key.weight, mean=0.0, std=initializer_range)
-        nn.init.normal_(self.value.weight, mean=0.0, std=initializer_range)
+        # Output projection
+        self.output = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(attention_probs_dropout_prob)
         
-    def transpose_for_scores(self, x, batch_size):
-        # Reshaping the input tensor
-        x = x.view(batch_size, -1, self.num_attention_heads, self.size_per_head)
-        return x.permute(0, 2, 1, 3)  # [batch_size, num_attention_heads, seq_length, size_per_head]
+    def transpose_for_scores(self, x):
 
-    def forward(self, from_tensor, to_tensor, attention_mask=None):
-        batch_size = from_tensor.size(0)
-        from_seq_length = from_tensor.size(1)
-        to_seq_length = to_tensor.size(1)
-        
+        batch_size, seq_length, _ = x.size()
+        new_shape = (batch_size, seq_length, self.num_attention_heads, self.attention_head_size)
+        x = x.view(*new_shape)
+
+        return x.permute(0, 2, 1, 3)
+
+    def forward(self, hidden_states, attention_mask=None):
+        batch_size, seq_length, hidden_size = hidden_states.size()
         # Linear projections for Q, K, V
-        query_layer = self.query(from_tensor)
-        key_layer = self.key(to_tensor)
-        value_layer = self.value(to_tensor)
-        
+        query_layer = self.query(hidden_states)
+        key_layer = self.key(hidden_states)
+        value_layer = self.value(hidden_states)
+
         # Reshape and transpose
-        query_layer = self.transpose_for_scores(query_layer, batch_size)
-        key_layer = self.transpose_for_scores(key_layer, batch_size)
+        query_layer = self.transpose_for_scores(query_layer)
+        key_layer = self.transpose_for_scores(key_layer)
+        value_layer = self.transpose_for_scores(value_layer)
         
         # Attention scores: QK^T / sqrt(d_k)
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        attention_scores = attention_scores / math.sqrt(self.size_per_head)
-        
-        # Apply mask if available
+        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+
+        print(f"Attention scores shape: {attention_scores.shape}")
         if attention_mask is not None:
-            attention_scores = attention_scores.masked_fill(attention_mask == 0, -1e9)
+            print(f"Attention mask shape: {attention_mask.shape}")
+
+            # [batch_size, 1, 1, seq_length] or [batch_size, 1, seq_length, seq_length]
+            if len(attention_mask.shape) == 3:
+                attention_mask = attention_mask.unsqueeze(1)
+            
+            print(f"Reshaped attention mask shape: {attention_mask.shape}")
+            
+            # Make sure mask broadcasts correctly
+            attention_scores = attention_scores.masked_fill(
+                attention_mask == 0,
+                -1e9
+            )
         
         # Softmax to get attention probabilities
         attention_probs = F.softmax(attention_scores, dim=-1)
         attention_probs = self.dropout(attention_probs)
         
         # Get the context layer
-        value_layer = value_layer.view(batch_size, -1, self.num_attention_heads, self.size_per_head)
-        value_layer = value_layer.permute(0, 2, 1, 3)
         context_layer = torch.matmul(attention_probs, value_layer)
-        
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        context_layer = context_layer.view(batch_size, from_seq_length, self.num_attention_heads * self.size_per_head)
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        context_layer = context_layer.view(*new_context_layer_shape)
         
-        return context_layer
+        # Apply output projection
+        output = self.output(context_layer)
+
+        return output
 
 
 class Transformer(nn.Module):
-    def __init__(self, hidden_size=1024, num_hidden_layers=6, num_attention_heads=4,
+    def __init__(self, hidden_size, num_hidden_layers, num_attention_heads,
                  intermediate_size=2048, hidden_dropout_prob=0.1, attention_probs_dropout_prob=0.1,
-                 initializer_range=0.02, max_position_embeddings=512, use_position_emb=True):
-        super(Transformer, self).__init__()
+                 max_position_embeddings=512):
+        super().__init__()
 
-        self.hidden_size = hidden_size
-        self.num_hidden_layers = num_hidden_layers
-        self.num_attention_heads = num_attention_heads
-        self.intermediate_size = intermediate_size
-        self.hidden_dropout_prob = hidden_dropout_prob
-        self.attention_probs_dropout_prob = attention_probs_dropout_prob
-        self.initializer_range = initializer_range
-        self.max_position_embeddings = max_position_embeddings
-        self.use_position_emb = use_position_emb
-
-        # Hidden size must be a multiple of num_attention_heads
-        if hidden_size % num_attention_heads != 0:
-            raise ValueError(f"The hidden size ({hidden_size}) is not a multiple of the number of attention heads ({num_attention_heads})")
-
-        self.attention_head_size = int(hidden_size / num_attention_heads)
-        
-        # Position embedding
-        if use_position_emb:
-            self.position_embeddings = nn.Parameter(torch.zeros(max_position_embeddings, hidden_size))
-            nn.init.normal_(self.position_embeddings, mean=0.0, std=self.initializer_range)
+        self.position_embeddings = nn.Parameter(
+            torch.randn(1, max_position_embeddings, hidden_size)
+        )
         
         # Transformer layers
-        self.layers = nn.ModuleList([TransformerLayer(hidden_size, num_attention_heads, 
-                                                      attention_head_size=self.attention_head_size, 
-                                                      intermediate_size=intermediate_size,
-                                                      hidden_dropout_prob=hidden_dropout_prob,
-                                                      attention_probs_dropout_prob=attention_probs_dropout_prob,
-                                                      initializer_range=initializer_range) 
-                                     for _ in range(num_hidden_layers)])
+        self.layers = nn.ModuleList([
+            TransformerBlock(
+                hidden_size=hidden_size,
+                intermediate_size=intermediate_size,
+                num_attention_heads=num_attention_heads,
+                hidden_dropout_prob=hidden_dropout_prob,
+                attention_probs_dropout_prob=attention_probs_dropout_prob
+            )
+            for _ in range(num_hidden_layers)
+        ])
+        self.dropout = nn.Dropout(hidden_dropout_prob)
+        self.norm = nn.LayerNorm(hidden_size, eps=1e-12)
 
-        self.layer_norm = nn.LayerNorm(hidden_size, eps=1e-12)
 
-    def forward(self, input_tensor, attention_mask=None, do_return_all_layers=False):
-        """
-        Applies the Transformer model on the input tensor with optional positional embeddings and attention mask.
+    def forward(self, hidden_states, attention_mask=None):
+        seq_length = hidden_states.size(1)
+        position_embeddings = self.position_embeddings[:, :seq_length, :]
+        hidden_states = hidden_states + position_embeddings
 
-        Args:
-            input_tensor: torch.Tensor, shape (batch_size, seq_length, hidden_size)
-            attention_mask: Optional torch.Tensor of shape (batch_size, seq_length)
-            do_return_all_layers: If True, returns the output of each Transformer layer
-
-        Returns:
-            torch.Tensor: Final Transformer output tensor, or all layer outputs if do_return_all_layers is True.
-        """
-        batch_size, seq_length, _ = input_tensor.size()
-
-        # Add positional embeddings if enabled
-        if self.use_position_emb:
-            assert seq_length <= self.max_position_embeddings, "Sequence length exceeds max position embeddings"
-            position_embeddings = self.position_embeddings[:seq_length, :].unsqueeze(0)
-            input_tensor = input_tensor + position_embeddings
-
-        prev_output = self.layer_norm(input_tensor)
+        # Apply initial dropout and layer norm
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.norm(hidden_states)
         
-        all_layer_outputs = []
-        
-        # Apply each transformer layer
         for layer in self.layers:
-            layer_output = layer(prev_output, attention_mask)
-            prev_output = layer_output
-            all_layer_outputs.append(layer_output)
+            hidden_states = layer(hidden_states, attention_mask)
 
-        if do_return_all_layers:
-            return all_layer_outputs
-        else:
-            return all_layer_outputs[-1]
+        return hidden_states
 
 
-class TransformerLayer(nn.Module):
-    def __init__(self, hidden_size, num_attention_heads, attention_head_size, intermediate_size, 
-                 hidden_dropout_prob, attention_probs_dropout_prob, initializer_range):
-        super(TransformerLayer, self).__init__()
+class TransformerBlock(nn.Module):
+    def __init__(self, hidden_size, intermediate_size, num_attention_heads,  
+                 hidden_dropout_prob, attention_probs_dropout_prob):
+        super().__init__()
 
         # Self-attention
-        self.self_attention = AttentionLayer(
-            num_attention_heads=num_attention_heads, size_per_head=attention_head_size, 
-            dropout_prob=attention_probs_dropout_prob
+        self.attention = AttentionLayer(
+            hidden_size=hidden_size,
+            num_attention_heads=num_attention_heads,
+            attention_probs_dropout_prob=attention_probs_dropout_prob
         )
-        self.attention_output_dense = nn.Linear(hidden_size, hidden_size)
-        nn.init.normal_(self.attention_output_dense.weight, mean=0.0, std=initializer_range)
-        self.attention_dropout = nn.Dropout(hidden_dropout_prob)
-        self.attention_layer_norm = nn.LayerNorm(hidden_size, eps=1e-12)
 
         # Intermediate layer
-        self.intermediate_dense = nn.Linear(hidden_size, intermediate_size)
-        nn.init.normal_(self.intermediate_dense.weight, mean=0.0, std=initializer_range)
-        self.intermediate_act_fn = F.gelu
+        self.intermediate = nn.Sequential(
+            nn.Linear(hidden_size, intermediate_size),
+            nn.GELU()
+        )
 
         # Output layer
-        self.output_dense = nn.Linear(intermediate_size, hidden_size)
-        nn.init.normal_(self.output_dense.weight, mean=0.0, std=initializer_range)
-        self.output_dropout = nn.Dropout(hidden_dropout_prob)
-        self.output_layer_norm = nn.LayerNorm(hidden_size, eps=1e-12)
+        self.output = nn.Linear(intermediate_size, hidden_size)
+        self.dropout = nn.Dropout(hidden_dropout_prob)
+        self.norm1 = nn.LayerNorm(hidden_size)
+        self.norm2 = nn.LayerNorm(hidden_size)
 
     def forward(self, hidden_states, attention_mask=None):
         """
@@ -314,19 +295,15 @@ class TransformerLayer(nn.Module):
         Returns:
             torch.Tensor: Output tensor from this transformer layer.
         """
-        # Self-attention layer
-        attention_output = self.self_attention(hidden_states, hidden_states, attention_mask)
-        attention_output = self.attention_output_dense(attention_output)
-        attention_output = self.attention_dropout(attention_output)
-        attention_output = self.attention_layer_norm(attention_output + hidden_states)
+        # Self-attention block
+        attention_output = self.attention(hidden_states, attention_mask)
+        attention_output = self.dropout(attention_output)
+        attention_output = self.norm1(attention_output + hidden_states)
 
-        # Intermediate layer
-        intermediate_output = self.intermediate_dense(attention_output)
-        intermediate_output = self.intermediate_act_fn(intermediate_output)
-
-        # Output layer
-        layer_output = self.output_dense(intermediate_output)
-        layer_output = self.output_dropout(layer_output)
-        layer_output = self.output_layer_norm(layer_output + attention_output)
+        # Feed-forward block
+        intermediate_output = self.intermediate(attention_output)
+        layer_output = self.output(intermediate_output)
+        layer_output = self.dropout(layer_output)
+        layer_output = self.norm2(layer_output + attention_output)
 
         return layer_output
