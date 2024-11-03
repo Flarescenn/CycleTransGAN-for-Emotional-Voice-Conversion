@@ -16,12 +16,12 @@ class CycleGAN:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Initialize generators
-        self.generator_A2B = generator()
-        self.generator_B2A = generator()
+        self.generator_A2B = generator(num_features)
+        self.generator_B2A = generator(num_features)
         
         # Initialize discriminators
-        self.discriminator_A = discriminator()
-        self.discriminator_B = discriminator()
+        self.discriminator_A = discriminator(num_features)
+        self.discriminator_B = discriminator(num_features)
        
         self.mode = mode
 
