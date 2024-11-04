@@ -138,13 +138,13 @@ class CycleGAN(nn.Module):
         self.discriminator_loss_A = (
             -torch.mean(self.discrimination_A_real) + 
             torch.mean(self.discrimination_A_fake) +
-            10.0 * gradient_penalty_A  # lambda_gp = 10
+            1.0 * gradient_penalty_A  # lambda_gp = 1
         )
         
         self.discriminator_loss_B = (
             -torch.mean(self.discrimination_B_real) + 
             torch.mean(self.discrimination_B_fake) +
-            10.0 * gradient_penalty_B
+            1.0 * gradient_penalty_B
         )
         '''
         self.discriminator_loss_A = (
@@ -185,14 +185,14 @@ class CycleGAN(nn.Module):
         generator_loss.backward()
         generator_optimizer.step()
         
-        # Discriminator forward pass and loss computation every 4 steps:
-        if self.step_count%2==0:
-            discriminator_optimizer.zero_grad()
-            discriminator_loss = self.compute_discriminator_losses(input_A, input_B, generation_A, generation_B)
-            discriminator_loss.backward()
-            discriminator_optimizer.step()
-        else:
-            discriminator_loss = torch.tensor(0.0).to(self.device)
+        # Discriminator forward pass and loss computation every 2 steps:
+        #if self.step_count%2==0:
+        discriminator_optimizer.zero_grad()
+        discriminator_loss = self.compute_discriminator_losses(input_A, input_B, generation_A, generation_B)
+        discriminator_loss.backward()
+        discriminator_optimizer.step()
+        #else:
+            #discriminator_loss = torch.tensor(0.0).to(self.device)
         
         
         # Log losses
