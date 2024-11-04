@@ -188,15 +188,15 @@ class AttentionLayer(nn.Module):
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
 
-        print(f"Attention scores shape: {attention_scores.shape}")
+        #print(f"Attention scores shape: {attention_scores.shape}")
         if attention_mask is not None:
-            print(f"Attention mask shape: {attention_mask.shape}")
+           # print(f"Attention mask shape: {attention_mask.shape}")
 
             # [batch_size, 1, 1, seq_length] or [batch_size, 1, seq_length, seq_length]
             if len(attention_mask.shape) == 3:
                 attention_mask = attention_mask.unsqueeze(1)
             
-            print(f"Reshaped attention mask shape: {attention_mask.shape}")
+            #print(f"Reshaped attention mask shape: {attention_mask.shape}")
             
             # Make sure mask broadcasts correctly
             attention_scores = attention_scores.masked_fill(

@@ -477,7 +477,7 @@ class discriminator(nn.Module):
         
         o1 = self.output_dense(d3_flat)
         o1 = self.output_activation(o1)
-        print(f"Final output shape: {o1.shape}")
+        #print(f"Final output shape: {o1.shape}")
 
         return o1
 

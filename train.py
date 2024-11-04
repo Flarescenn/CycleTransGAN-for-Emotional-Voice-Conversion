@@ -91,7 +91,7 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
     end_time = time.time()
     time_elapsed = end_time - start_time
     print(f'Preprocessing Done. Time Elapsed: {int(time_elapsed) // 3600:02d}:{(int(time_elapsed) % 3600) // 60:02d}:{(int(time_elapsed) % 60):02d}')
-
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # Initialize CycleGAN model
     model = CycleGAN(num_features=num_mcep, log_dir=tensorboard_log_dir + str(n_frames)).to(device)
     if n_frames != 128:
