@@ -7,7 +7,7 @@ from module import *
 from utils import l1_loss, l2_loss
 from torch.utils.tensorboard import SummaryWriter
 
-class CycleGAN:
+class CycleGAN(nn.Module):
     def __init__(self, num_features, discriminator=discriminator, generator=generator_gatedcnn, mode='train', log_dir='./log'):
         super(CycleGAN, self).__init__()
         self.num_features = num_features
