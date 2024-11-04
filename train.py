@@ -39,11 +39,19 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
         torch.cuda.manual_seed(random_seed)
 
     # Hyperparameters
-    num_epochs = 500
+    if n_frames == 128:
+        num_epochs = 300  # More epochs for foundational training
+    elif n_frames == 256:
+        num_epochs = 150  # Medium context refinement
+    elif n_frames == 380:
+        num_epochs = 80   # Final refinement
+    else:
+        num_epochs = 500  # Default case
+
     mini_batch_size = 1  
     generator_learning_rate = 0.0002
     generator_learning_rate_decay = generator_learning_rate / 5000000
-    discriminator_learning_rate = 0.0001
+    discriminator_learning_rate = 0.00005
     discriminator_learning_rate_decay = discriminator_learning_rate / 5000000
     sampling_rate = 24000
     num_mcep = 24
@@ -140,8 +148,8 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
         time_elapsed_epoch = end_time_epoch - start_time_epoch
         print(f'Time Elapsed for This Epoch: {int(time_elapsed_epoch) // 3600:02d}:{(int(time_elapsed_epoch) % 3600) // 60:02d}:{(int(time_elapsed_epoch) % 60):02d}')
 
-        # Generate validation data every 5 epochs
-        if validation_A_dir is not None and epoch % 5 == 0:
+        # Generate validation data every 10 epochs
+        if validation_A_dir is not None and epoch % 10 == 0:
             print('Generating Validation Data B from A...')
             for file in os.listdir(validation_A_dir):
                 filepath = os.path.join(validation_A_dir, file)

@@ -190,7 +190,7 @@ class AttentionLayer(nn.Module):
 
         #print(f"Attention scores shape: {attention_scores.shape}")
         if attention_mask is not None:
-           # print(f"Attention mask shape: {attention_mask.shape}")
+            #print(f"Attention mask shape: {attention_mask.shape}")
 
             # [batch_size, 1, 1, seq_length] or [batch_size, 1, seq_length, seq_length]
             if len(attention_mask.shape) == 3:

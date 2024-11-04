@@ -368,9 +368,9 @@ class generator_gatedcnn(nn.Module):
         
         self.transformer1 = Transformer(
             hidden_size=512,
-            num_hidden_layers=1,
-            num_attention_heads=8,
-            intermediate_size=1024,
+            num_hidden_layers=2,
+            num_attention_heads=16,
+            intermediate_size=2048,
             hidden_dropout_prob=0.1,
             attention_probs_dropout_prob=0.1,
             max_position_embeddings=1024
@@ -379,9 +379,9 @@ class generator_gatedcnn(nn.Module):
         self.residual2 = residual1d_block(512, filters=1024, kernel_size=3, strides=1)  #returns 512
         self.transformer2 = Transformer(
             hidden_size=512,
-            num_hidden_layers=1,
-            num_attention_heads=8,
-            intermediate_size=1024,
+            num_hidden_layers=2,
+            num_attention_heads=16,
+            intermediate_size=2048,
             hidden_dropout_prob=0.1,
             attention_probs_dropout_prob=0.1,
             max_position_embeddings=1024
@@ -445,9 +445,10 @@ class discriminator(nn.Module):
     def __init__(self, inputs):
         super(discriminator, self).__init__()
         
-    
+        self.gp_weight = 10.0
+        #self.instance_norm = nn.InstanceNorm2d(128)
         self.input_expand = lambda x: x.unsqueeze(2)
-        
+        #self.noise_std = 0.01
         self.h1_conv = conv2d_layer(inputs, filters=128, kernel_size=(3, 3), strides=(1, 2), activation=True)
         self.h1_conv_gates = conv2d_layer(inputs, filters=128, kernel_size=(3, 3), strides=(1, 2), activation=True)
         
