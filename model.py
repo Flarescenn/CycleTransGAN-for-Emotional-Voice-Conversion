@@ -81,6 +81,7 @@ class CycleGAN(nn.Module):
         )
         
         return self.generator_loss
+    '''
     def compute_gradient_penalty(self, discriminator, real_samples, fake_samples):
         """
         Compute gradient penalty for WGAN-GP
@@ -109,7 +110,7 @@ class CycleGAN(nn.Module):
         # Compute gradient penalty
         gradients = gradients.view(batch_size, -1)
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-        return gradient_penalty
+        return gradient_penalty'''
         
     def compute_discriminator_losses(self, input_A_real, input_B_real, input_A_fake, input_B_fake):
         
@@ -120,7 +121,7 @@ class CycleGAN(nn.Module):
         # Fake samples
         self.discrimination_A_fake = self.discriminator_A(input_A_fake.detach())
         self.discrimination_B_fake = self.discriminator_B(input_B_fake.detach())
-        
+        '''
         # Gradient penalty
         gradient_penalty_A = self.compute_gradient_penalty(
             self.discriminator_A, input_A_real, input_A_fake.detach()
@@ -140,7 +141,16 @@ class CycleGAN(nn.Module):
             -torch.mean(self.discrimination_B_real) + 
             torch.mean(self.discrimination_B_fake) +
             10.0 * gradient_penalty_B
-        )
+        )'''
+        self.discriminator_loss_A = (
+            torch.mean((self.discrimination_A_real - 1) ** 2) +
+            torch.mean(self.discrimination_A_fake ** 2)
+        ) / 2
+
+        self.discriminator_loss_B = (
+            torch.mean((self.discrimination_B_real - 1) ** 2) +
+            torch.mean(self.discrimination_B_fake ** 2)
+        ) / 2 
         
         # Total discriminator loss
         self.discriminator_loss = self.discriminator_loss_A + self.discriminator_loss_B
@@ -170,8 +180,8 @@ class CycleGAN(nn.Module):
         generator_loss.backward()
         generator_optimizer.step()
         
-        # Discriminator forward pass and loss computation every 2 steps:
-        if self.step_count%2==0:
+        # Discriminator forward pass and loss computation every 4 steps:
+        if self.step_count%4==0:
             discriminator_optimizer.zero_grad()
             discriminator_loss = self.compute_discriminator_losses(input_A, input_B, generation_A, generation_B)
             discriminator_loss.backward()
