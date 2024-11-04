@@ -181,13 +181,13 @@ class CycleGAN(nn.Module):
         generator_optimizer.step()
         
         # Discriminator forward pass and loss computation every 4 steps:
-        if self.step_count%4==0:
+        if self.step_count%2==0:
             discriminator_optimizer.zero_grad()
             discriminator_loss = self.compute_discriminator_losses(input_A, input_B, generation_A, generation_B)
             discriminator_loss.backward()
             discriminator_optimizer.step()
         else:
-            discriminator_loss = torch.tensor(0.0).to(self.device)
+            discriminator_loss = None
         
         
         # Log losses
