@@ -187,7 +187,7 @@ class CycleGAN(nn.Module):
             discriminator_loss.backward()
             discriminator_optimizer.step()
         else:
-            discriminator_loss = None
+            discriminator_loss = torch.tensor(0.0).to(self.device)
         
         
         # Log losses
