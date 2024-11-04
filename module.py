@@ -460,7 +460,7 @@ class discriminator(nn.Module):
         # Output dense layer
         self.output_dense = nn.Linear(2048, 1)
         # self.output_dense = nn.Linear(8192, 1)
-        self.output_activation = nn.Sigmoid()
+        #self.output_activation = nn.Sigmoid()
         
 
     def forward(self, inputs):
@@ -477,7 +477,7 @@ class discriminator(nn.Module):
         d3_flat = d3.view(d3.size(0), -1) 
         
         o1 = self.output_dense(d3_flat)
-        o1 = self.output_activation(o1)
+        #o1 = self.output_activation(o1)
         #print(f"Final output shape: {o1.shape}")
 
         return o1
