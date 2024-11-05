@@ -5,16 +5,17 @@ from torch.optim import Adam
 from datetime import datetime
 from module import *
 from utils import l1_loss, l2_loss
+import torch.nn.utils as torch_utils
 from torch.utils.tensorboard import SummaryWriter
 
 class CycleGAN(nn.Module):
-    def __init__(self, num_features, discriminator=discriminator, generator=generator_gatedcnn, mode='train', log_dir='./log'):
+    def __init__(self, num_features, discriminator=discriminator, generator=generator_gatedcnn, mode='train', log_dir='./log', max_grad_norm=10):
         super(CycleGAN, self).__init__()
         self.num_features = num_features
         # [batch_size, num_frames, num_features] 
         self.input_shape = [-1, None, num_features]
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+        #self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.max_grad_norm = max_grad_norm
         # Initialize generators
         self.generator_A2B = generator(num_features)
         self.generator_B2A = generator(num_features)
@@ -27,6 +28,16 @@ class CycleGAN(nn.Module):
 
         #self.build_model()
         #self.optimizer_initializer()
+        self.generator_optimizer = Adam(
+            list(self.generator_A2B.parameters()) + list(self.generator_B2A.parameters()),
+            lr=0.0002,  
+            betas=(0.5, 0.999)
+        )
+        self.discriminator_optimizer = Adam(
+            list(self.discriminator_A.parameters()) + list(self.discriminator_B.parameters()),
+            lr=0.00005,  
+            betas=(0.5, 0.999)
+        )
 
         if self.mode == 'train':
             self.step_count = 0
@@ -167,33 +178,52 @@ class CycleGAN(nn.Module):
         input_A = input_A.to(self.device)
         input_B = input_B.to(self.device)
         
-        # Initialize optimizers
-        generator_optimizer = Adam(
-            list(self.generator_A2B.parameters()) + list(self.generator_B2A.parameters()),
-            lr=generator_learning_rate,
-            betas=(0.5, 0.999)
-        )
-        discriminator_optimizer = Adam(
-            list(self.discriminator_A.parameters()) + list(self.discriminator_B.parameters()),
-            lr=discriminator_learning_rate,
-            betas=(0.5, 0.999)
-        )
+        # Update learning rates
+        for param_group in self.generator_optimizer.param_groups:
+            param_group['lr'] = generator_learning_rate
+        for param_group in self.discriminator_optimizer.param_groups:
+            param_group['lr'] = discriminator_learning_rate
+
          # Generator forward pass and loss computation
-        generator_optimizer.zero_grad()
+        self.generator_optimizer.zero_grad()
         generation_A, generation_B = self(input_A, input_B)
         generator_loss = self.compute_generator_losses(input_A, input_B, lambda_cycle, lambda_identity)
         generator_loss.backward()
-        generator_optimizer.step()
+        self.generator_optimizer.step()
+
+        torch_utils.clip_grad_norm_(
+            list(self.generator_A2B.parameters()) + list(self.generator_B2A.parameters()),
+            max_norm=self.max_grad_norm
+        )
+        
+        self.generator_optimizer.step()
         
         # Discriminator forward pass and loss computation every 2 steps:
         #if self.step_count%2==0:
-        discriminator_optimizer.zero_grad()
+        self.discriminator_optimizer.zero_grad()
         discriminator_loss = self.compute_discriminator_losses(input_A, input_B, generation_A, generation_B)
         discriminator_loss.backward()
-        discriminator_optimizer.step()
+        self.discriminator_optimizer.step()
         #else:
             #discriminator_loss = torch.tensor(0.0).to(self.device)
+        torch_utils.clip_grad_norm_(
+            list(self.discriminator_A.parameters()) + list(self.discriminator_B.parameters()),
+            max_norm=self.max_grad_norm
+        )
         
+        self.discriminator_optimizer.step()
+
+        if self.mode == 'train' and self.step_count % 100 == 0:
+            gen_grad_norm = torch_utils.clip_grad_norm_(
+                list(self.generator_A2B.parameters()) + list(self.generator_B2A.parameters()),
+                max_norm=float('inf')
+            )
+            disc_grad_norm = torch_utils.clip_grad_norm_(
+                list(self.discriminator_A.parameters()) + list(self.discriminator_B.parameters()),
+                max_norm=float('inf')
+            )
+            self.writer.add_scalar('Gradients/Generator_norm', gen_grad_norm, self.step_count)
+            self.writer.add_scalar('Gradients/Discriminator_norm', disc_grad_norm, self.step_count)
         
         # Log losses
         if self.mode == 'train':
@@ -240,7 +270,7 @@ class CycleGAN(nn.Module):
         self.discriminator_A.load_state_dict(checkpoint['discriminator_A_state_dict'])
         self.discriminator_B.load_state_dict(checkpoint['discriminator_B_state_dict'])
         if self.mode == 'train':
-            self.train_step = checkpoint['step_count']
+            self.step_count = checkpoint['step_count']
 
 if __name__ == '__main__':
     model = CycleGAN(num_features=24, discriminator=discriminator, generator=generator_gatedcnn)
