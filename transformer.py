@@ -201,8 +201,8 @@ class AttentionLayer(nn.Module):
             # Make sure mask broadcasts correctly
             attention_scores = attention_scores.masked_fill(
                 attention_mask == 0,
-                #-1e9
-                -1000.0
+                -1e9
+                #-1000.0
             )
         
         # Softmax to get attention probabilities
