@@ -30,6 +30,68 @@ class VoiceDataset(Dataset):
         return (torch.FloatTensor(self.coded_sps_A_norm[idx][:, start_A:end_A]), 
                 torch.FloatTensor(self.coded_sps_B_norm[idx][:, start_B:end_B]))
 
+def preprocess(train_A_dir, train_B_dir, cache_dir, sampling_rate, frame_period, num_mcep):
+    os.makedirs(cache_dir, exist_ok=True) #create if doesnt exist
+    cache_file = os.path.join(cache_dir, 'preprocessed_data.npz')
+    if os.path.exists(cache_file):
+        print('Loading preprocessed data from cache...')
+        cached_data = np.load(cache_file, allow_pickle=True)
+        return (cached_data['coded_sps_A_norm'], cached_data['coded_sps_B_norm'],
+                cached_data['log_f0s_mean_A'], cached_data['log_f0s_std_A'],
+                cached_data['log_f0s_mean_B'], cached_data['log_f0s_std_B'],
+                cached_data['coded_sps_A_mean'], cached_data['coded_sps_A_std'],
+                cached_data['coded_sps_B_mean'], cached_data['coded_sps_B_std'])
+
+    print('Preprocessing data...')
+    start_time = time.time()
+    # Load and preprocess training data
+    wavs_A = load_wavs(wav_dir=train_A_dir, sr=sampling_rate)
+    wavs_B = load_wavs(wav_dir=train_B_dir, sr=sampling_rate)
+
+    f0s_A, timeaxes_A, sps_A, aps_A, coded_sps_A = world_encode_data(
+        wavs=wavs_A, fs=sampling_rate, frame_period=frame_period, coded_dim=num_mcep)
+    f0s_B, timeaxes_B, sps_B, aps_B, coded_sps_B = world_encode_data(
+        wavs=wavs_B, fs=sampling_rate, frame_period=frame_period, coded_dim=num_mcep)
+
+    log_f0s_mean_A, log_f0s_std_A = logf0_statistics(f0s_A)
+    log_f0s_mean_B, log_f0s_std_B = logf0_statistics(f0s_B)
+
+    print('Log Pitch A')
+    print('Mean: %f, Std: %f' % (log_f0s_mean_A, log_f0s_std_A))
+    print('Log Pitch B')
+    print('Mean: %f, Std: %f' % (log_f0s_mean_B, log_f0s_std_B))     
+
+    coded_sps_A_transposed = transpose_in_list(lst=coded_sps_A)
+    coded_sps_B_transposed = transpose_in_list(lst=coded_sps_B)
+
+    coded_sps_A_norm, coded_sps_A_mean, coded_sps_A_std = coded_sps_normalization_fit_transoform(
+        coded_sps=coded_sps_A_transposed)
+    coded_sps_B_norm, coded_sps_B_mean, coded_sps_B_std = coded_sps_normalization_fit_transoform(
+        coded_sps=coded_sps_B_transposed)
+
+    # Cache the preprocessed data
+    np.savez(cache_file,
+             coded_sps_A_norm=coded_sps_A_norm,
+             coded_sps_B_norm=coded_sps_B_norm,
+             log_f0s_mean_A=log_f0s_mean_A,
+             log_f0s_std_A=log_f0s_std_A,
+             log_f0s_mean_B=log_f0s_mean_B,
+             log_f0s_std_B=log_f0s_std_B,
+             coded_sps_A_mean=coded_sps_A_mean,
+             coded_sps_A_std=coded_sps_A_std,
+             coded_sps_B_mean=coded_sps_B_mean,
+             coded_sps_B_std=coded_sps_B_std)
+
+    end_time = time.time()
+    time_elapsed = end_time - start_time
+    print(f'Preprocessing Done. Time Elapsed: {int(time_elapsed) // 3600:02d}:{(int(time_elapsed) % 3600) // 60:02d}:{(int(time_elapsed) % 60):02d}')
+
+    return (coded_sps_A_norm, coded_sps_B_norm,
+            log_f0s_mean_A, log_f0s_std_A,
+            log_f0s_mean_B, log_f0s_std_B,
+            coded_sps_A_mean, coded_sps_A_std,
+            coded_sps_B_mean, coded_sps_B_std)
+
 def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validation_A_dir, validation_B_dir, output_dir, tensorboard_log_dir, n_frames):
     
     # Set random seeds for reproducibility
@@ -58,31 +120,14 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
     lambda_identity = 5
 
     
-
-    print('Preprocessing Data...')
-
-    start_time = time.time()
-
-    # Load and preprocess training data
-    wavs_A = load_wavs(wav_dir=train_A_dir, sr=sampling_rate)
-    wavs_B = load_wavs(wav_dir=train_B_dir, sr=sampling_rate)
-
-    f0s_A, timeaxes_A, sps_A, aps_A, coded_sps_A = world_encode_data(wavs=wavs_A, fs=sampling_rate, frame_period=frame_period, coded_dim=num_mcep)
-    f0s_B, timeaxes_B, sps_B, aps_B, coded_sps_B = world_encode_data(wavs=wavs_B, fs=sampling_rate, frame_period=frame_period, coded_dim=num_mcep)
-
-    log_f0s_mean_A, log_f0s_std_A = logf0_statistics(f0s_A)
-    log_f0s_mean_B, log_f0s_std_B = logf0_statistics(f0s_B)
-
-    print('Log Pitch A')
-    print('Mean: %f, Std: %f' % (log_f0s_mean_A, log_f0s_std_A))
-    print('Log Pitch B')
-    print('Mean: %f, Std: %f' % (log_f0s_mean_B, log_f0s_std_B))     
-
-    coded_sps_A_transposed = transpose_in_list(lst=coded_sps_A)
-    coded_sps_B_transposed = transpose_in_list(lst=coded_sps_B)
-
-    coded_sps_A_norm, coded_sps_A_mean, coded_sps_A_std = coded_sps_normalization_fit_transoform(coded_sps=coded_sps_A_transposed)
-    coded_sps_B_norm, coded_sps_B_mean, coded_sps_B_std = coded_sps_normalization_fit_transoform(coded_sps=coded_sps_B_transposed)
+    cache_dir = os.path.join(model_dir, 'preprocessing_cache')
+    os.makedirs(cache_dir, exist_ok=True)
+     # Preprocess data or load from cache
+    (coded_sps_A_norm, coded_sps_B_norm,
+     log_f0s_mean_A, log_f0s_std_A,
+     log_f0s_mean_B, log_f0s_std_B,
+     coded_sps_A_mean, coded_sps_A_std,
+     coded_sps_B_mean, coded_sps_B_std) = preprocess(train_A_dir, train_B_dir, cache_dir, sampling_rate, frame_period, num_mcep)
 
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
@@ -94,9 +139,7 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
         validation_A_output_dir = os.path.join(output_dir, f'converted_A{n_frames}')
         os.makedirs(validation_A_output_dir, exist_ok=True)
 
-    end_time = time.time()
-    time_elapsed = end_time - start_time
-    print(f'Preprocessing Done. Time Elapsed: {int(time_elapsed) // 3600:02d}:{(int(time_elapsed) % 3600) // 60:02d}:{(int(time_elapsed) % 60):02d}')
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # Initialize CycleGAN model
     model = CycleGAN(
