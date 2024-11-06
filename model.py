@@ -54,7 +54,7 @@ class CycleGAN(nn.Module):
             eta_min=1e-5
         )
         
-        self.scaler = torch.amp.GradScaler(device_type='cuda')
+        self.scaler = torch.amp.GradScaler('cuda')
 
         if self.mode == 'train':
             self.step_count = 0
