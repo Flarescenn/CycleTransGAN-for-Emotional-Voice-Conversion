@@ -54,7 +54,7 @@ class CycleGAN(nn.Module):
             eta_min=1e-5
         )
         
-        self.scaler = torch.cuda.amp.GradScaler()
+        self.scaler = torch.amp.GradScaler(device_type='cuda')
 
         if self.mode == 'train':
             self.step_count = 0
@@ -123,7 +123,7 @@ class CycleGAN(nn.Module):
         alpha = torch.rand(batch_size, 1, 1).to(self.device)
 
         # Interpolate between real and fake samples
-        interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad(True)
+        interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad_(True)
         # Get discriminator output for interpolated images
         d_interpolates = discriminator(interpolates)
 
@@ -192,7 +192,7 @@ class CycleGAN(nn.Module):
         input_A = input_A.to(self.device)
         input_B = input_B.to(self.device)
         # Generate fake samples
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             with torch.no_grad():
                 generation_A = self.generator_B2A(input_B)
                 generation_B = self.generator_A2B(input_A)
@@ -203,7 +203,7 @@ class CycleGAN(nn.Module):
         
         for _ in range(n_critic):       #5 discriminator updates per generator update
             self.discriminator_optimizer.zero_grad()
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 # Compute discriminator losses
                 disc_real_A = self.discriminator_A(input_A)
                 disc_fake_A = self.discriminator_A(generation_A.detach())
@@ -238,7 +238,7 @@ class CycleGAN(nn.Module):
 
         # Generator update
         self.generator_optimizer.zero_grad()
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             # Forward passes
             generation_A = self.generator_B2A(input_B)
             generation_B = self.generator_A2B(input_A)
