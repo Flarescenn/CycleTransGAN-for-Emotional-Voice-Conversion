@@ -9,8 +9,11 @@ import torch.nn.utils as torch_utils
 from torch.utils.tensorboard import SummaryWriter
 
 class CycleGAN(nn.Module):
-    def __init__(self, num_features, discriminator=discriminator, generator=generator_gatedcnn, mode='train', log_dir='./log', max_grad_norm=10):
+    def __init__(self, num_features, discriminator=discriminator, generator=generator_gatedcnn,
+                 mode='train', log_dir='./log', max_grad_norm=10, gp_lambda=5,
+                 initial_generator_lr=0.0002, initial_discriminator_lr=0.0001):
         super(CycleGAN, self).__init__()
+        
         self.num_features = num_features
         # [batch_size, num_frames, num_features] 
         self.input_shape = [-1, None, num_features]
@@ -23,21 +26,35 @@ class CycleGAN(nn.Module):
         # Initialize discriminators
         self.discriminator_A = discriminator(num_features)
         self.discriminator_B = discriminator(num_features)
-       
+        self.gp_lambda = gp_lambda
         self.mode = mode
 
         #self.build_model()
         #self.optimizer_initializer()
         self.generator_optimizer = Adam(
             list(self.generator_A2B.parameters()) + list(self.generator_B2A.parameters()),
-            lr=0.0002,  
+            lr=initial_generator_lr,  
             betas=(0.5, 0.999)
         )
         self.discriminator_optimizer = Adam(
             list(self.discriminator_A.parameters()) + list(self.discriminator_B.parameters()),
-            lr=0.00005,  
+            lr=initial_discriminator_lr,  
             betas=(0.5, 0.999)
         )
+        self.generator_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.generator_optimizer, 
+            T_0=50,  # restart every 50 epochs
+            T_mult=2,  # double the restart interval after each restart
+            eta_min=1e-5  # minimum learning rate
+        )
+        self.discriminator_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.discriminator_optimizer,
+            T_0=50,
+            T_mult=2,
+            eta_min=1e-5
+        )
+        
+        self.scaler = torch.cuda.amp.GradScaler()
 
         if self.mode == 'train':
             self.step_count = 0
@@ -63,7 +80,7 @@ class CycleGAN(nn.Module):
         
         return self.generation_A, self.generation_B
 
-    def compute_generator_losses(self, input_A_real, input_B_real, lambda_cycle, lambda_identity):
+    '''def compute_generator_losses(self, input_A_real, input_B_real, lambda_cycle, lambda_identity):
         # Generator adversarial losses
         discrimination_B_fake = self.discriminator_B(self.generation_B)
         discrimination_A_fake = self.discriminator_A(self.generation_A)
@@ -95,28 +112,25 @@ class CycleGAN(nn.Module):
             lambda_identity * self.identity_loss
         )
         
-        return self.generator_loss
+        return self.generator_loss'''
     
     def compute_gradient_penalty(self, discriminator, real_samples, fake_samples):
         """
         Compute gradient penalty for WGAN-GP
         """
         batch_size = real_samples.size(0)
+        
         alpha = torch.rand(batch_size, 1, 1).to(self.device)
 
         # Interpolate between real and fake samples
-        interpolates = alpha * real_samples + (1 - alpha) * fake_samples
-        interpolates = interpolates.requires_grad_(True)
-
+        interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad(True)
         # Get discriminator output for interpolated images
         d_interpolates = discriminator(interpolates)
 
-        # Compute gradients
-        fake = torch.ones(batch_size, 1).to(self.device)
         gradients = torch.autograd.grad(
             outputs=d_interpolates,
             inputs=interpolates,
-            grad_outputs=fake,
+            grad_outputs=torch.ones(batch_size, 1).to(self.device),
             create_graph=True,
             retain_graph=True,
             only_inputs=True
@@ -127,7 +141,7 @@ class CycleGAN(nn.Module):
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
         return gradient_penalty
         
-    def compute_discriminator_losses(self, input_A_real, input_B_real, input_A_fake, input_B_fake):
+    '''def compute_discriminator_losses(self, input_A_real, input_B_real, input_A_fake, input_B_fake, gp_lambda):
         
         # Real samples
         self.discrimination_A_real = self.discriminator_A(input_A_real)
@@ -149,15 +163,15 @@ class CycleGAN(nn.Module):
         self.discriminator_loss_A = (
             -torch.mean(self.discrimination_A_real) + 
             torch.mean(self.discrimination_A_fake) +
-            1.0 * gradient_penalty_A  # lambda_gp = 1
+             gp_lambda * gradient_penalty_A  
         )
         
         self.discriminator_loss_B = (
             -torch.mean(self.discrimination_B_real) + 
             torch.mean(self.discrimination_B_fake) +
-            1.0 * gradient_penalty_B
+            gp_lambda * gradient_penalty_B
         )
-        '''
+        LSE loss:
         self.discriminator_loss_A = (
             torch.mean((self.discrimination_A_real - 1) ** 2) +
             torch.mean(self.discrimination_A_fake ** 2)
@@ -166,78 +180,132 @@ class CycleGAN(nn.Module):
         self.discriminator_loss_B = (
             torch.mean((self.discrimination_B_real - 1) ** 2) +
             torch.mean(self.discrimination_B_fake ** 2)
-        ) / 2 '''
+        ) / 2 
         
         # Total discriminator loss
         self.discriminator_loss = self.discriminator_loss_A + self.discriminator_loss_B
         
-        return self.discriminator_loss
+        return self.discriminator_loss'''
 
-    def train_step(self, input_A, input_B, lambda_cycle, lambda_identity, generator_learning_rate, discriminator_learning_rate):
+    def train_step(self, input_A, input_B, lambda_cycle, lambda_identity, n_critic=5):
         # Move inputs to device
         input_A = input_A.to(self.device)
         input_B = input_B.to(self.device)
+        # Generate fake samples
+        with torch.cuda.amp.autocast():
+            with torch.no_grad():
+                generation_A = self.generator_B2A(input_B)
+                generation_B = self.generator_A2B(input_A)
+
+        discriminator_loss_total = 0
+        discriminator_loss_A_total = 0
+        discriminator_loss_B_total = 0
         
-        # Update learning rates
-        for param_group in self.generator_optimizer.param_groups:
-            param_group['lr'] = generator_learning_rate
-        for param_group in self.discriminator_optimizer.param_groups:
-            param_group['lr'] = discriminator_learning_rate
+        for _ in range(n_critic):       #5 discriminator updates per generator update
+            self.discriminator_optimizer.zero_grad()
+            with torch.cuda.amp.autocast():
+                # Compute discriminator losses
+                disc_real_A = self.discriminator_A(input_A)
+                disc_fake_A = self.discriminator_A(generation_A.detach())
+                disc_real_B = self.discriminator_B(input_B)
+                disc_fake_B = self.discriminator_B(generation_B.detach())
+                
+                # Gradient penalty
+                gp_A = self.compute_gradient_penalty(
+                    self.discriminator_A, input_A, generation_A.detach()
+                )
+                gp_B = self.compute_gradient_penalty(
+                    self.discriminator_B, input_B, generation_B.detach()
+                )
+                
+                # Wasserstein loss with gradient penalty
+                d_loss_A = -torch.mean(disc_real_A) + torch.mean(disc_fake_A) + self.gp_lambda * gp_A
+                d_loss_B = -torch.mean(disc_real_B) + torch.mean(disc_fake_B) + self.gp_lambda * gp_B
 
-         # Generator forward pass and loss computation
+                discriminator_loss_A_total += d_loss_A.item()
+                discriminator_loss_B_total += d_loss_B.item()
+                discriminator_loss = d_loss_A + d_loss_B
+            
+            self.scaler.scale(discriminator_loss).backward()
+            torch_utils.clip_grad_norm_(
+                list(self.discriminator_A.parameters()) + list(self.discriminator_B.parameters()),
+                max_norm=self.max_grad_norm
+            )
+            self.scaler.step(self.discriminator_optimizer)
+            self.scaler.update()
+
+            discriminator_loss_total += discriminator_loss.item()
+
+        # Generator update
         self.generator_optimizer.zero_grad()
-        generation_A, generation_B = self(input_A, input_B)
-        generator_loss = self.compute_generator_losses(input_A, input_B, lambda_cycle, lambda_identity)
-        generator_loss.backward()
-        self.generator_optimizer.step()
-
+        with torch.cuda.amp.autocast():
+            # Forward passes
+            generation_A = self.generator_B2A(input_B)
+            generation_B = self.generator_A2B(input_A)
+            cycle_A = self.generator_B2A(generation_B)
+            cycle_B = self.generator_A2B(generation_A)
+            identity_A = self.generator_B2A(input_A)
+            identity_B = self.generator_A2B(input_B)
+            
+            # Generator losses
+            disc_fake_B = self.discriminator_B(generation_B)
+            disc_fake_A = self.discriminator_A(generation_A)
+            g_loss_A2B = -torch.mean(disc_fake_B)
+            g_loss_B2A = -torch.mean(disc_fake_A)
+            
+            # Cycle and identity losses
+            cycle_loss = (
+                torch.mean(torch.abs(input_A - cycle_A)) +
+                torch.mean(torch.abs(input_B - cycle_B))
+            )
+            identity_loss = (
+                torch.mean(torch.abs(input_A - identity_A)) +
+                torch.mean(torch.abs(input_B - identity_B))
+            )
+            
+            generator_loss = (
+                g_loss_A2B +
+                g_loss_B2A +
+                lambda_cycle * cycle_loss +
+                lambda_identity * identity_loss
+            )
+        
+        self.scaler.scale(generator_loss).backward()
         torch_utils.clip_grad_norm_(
             list(self.generator_A2B.parameters()) + list(self.generator_B2A.parameters()),
             max_norm=self.max_grad_norm
         )
+        self.scaler.step(self.generator_optimizer)
+        self.scaler.update()
         
-        self.generator_optimizer.step()
-        
-        # Discriminator forward pass and loss computation every 2 steps:
-        #if self.step_count%2==0:
-        self.discriminator_optimizer.zero_grad()
-        discriminator_loss = self.compute_discriminator_losses(input_A, input_B, generation_A, generation_B)
-        discriminator_loss.backward()
-        self.discriminator_optimizer.step()
-        #else:
-            #discriminator_loss = torch.tensor(0.0).to(self.device)
-        torch_utils.clip_grad_norm_(
-            list(self.discriminator_A.parameters()) + list(self.discriminator_B.parameters()),
-            max_norm=self.max_grad_norm
-        )
-        
-        self.discriminator_optimizer.step()
+        # Step the learning rate schedulers
+        self.generator_scheduler.step()
+        self.discriminator_scheduler.step()
 
-        if self.mode == 'train' and self.step_count % 100 == 0:
-            gen_grad_norm = torch_utils.clip_grad_norm_(
-                list(self.generator_A2B.parameters()) + list(self.generator_B2A.parameters()),
-                max_norm=float('inf')
-            )
-            disc_grad_norm = torch_utils.clip_grad_norm_(
-                list(self.discriminator_A.parameters()) + list(self.discriminator_B.parameters()),
-                max_norm=float('inf')
-            )
-            self.writer.add_scalar('Gradients/Generator_norm', gen_grad_norm, self.step_count)
-            self.writer.add_scalar('Gradients/Discriminator_norm', disc_grad_norm, self.step_count)
-        
-        # Log losses
+        # Logging
         if self.mode == 'train':
             self.writer.add_scalar('Generator/Total', generator_loss.item(), self.step_count)
-            self.writer.add_scalar('Generator/A2B', self.generator_loss_A2B.item(), self.step_count)
-            self.writer.add_scalar('Generator/B2A', self.generator_loss_B2A.item(), self.step_count)
-            self.writer.add_scalar('Generator/Cycle', self.cycle_loss.item(), self.step_count)
-            self.writer.add_scalar('Generator/Identity', self.identity_loss.item(), self.step_count)
-            self.writer.add_scalar('Discriminator/Total', discriminator_loss.item(), self.step_count)
-            self.writer.add_scalar('Discriminator/A', self.discriminator_loss_A.item(), self.step_count)
-            self.writer.add_scalar('Discriminator/B', self.discriminator_loss_B.item(), self.step_count)
+            self.writer.add_scalar('Generator/A2B', g_loss_A2B.item(), self.step_count)
+            self.writer.add_scalar('Generator/B2A', g_loss_B2A.item(), self.step_count)
+            self.writer.add_scalar('Generator/Cycle', cycle_loss.item(), self.step_count)
+            self.writer.add_scalar('Generator/Identity', identity_loss.item(), self.step_count)
+            self.writer.add_scalar('Discriminator/Total', discriminator_loss_total / n_critic, self.step_count)
+            self.writer.add_scalar('Discriminator/A', discriminator_loss_A_total/n_critic, self.step_count)
+            self.writer.add_scalar('Discriminator/B', discriminator_loss_B_total/n_critic, self.step_count)
+            self.writer.add_scalar('GradientPenalty/A', gp_A.item(), self.step_count)
+            self.writer.add_scalar('GradientPenalty/B', gp_B.item(), self.step_count)
+            
+            # Log learning rates
+            self.writer.add_scalar('LearningRate/Generator', 
+                                 self.generator_optimizer.param_groups[0]['lr'], 
+                                 self.step_count)
+            self.writer.add_scalar('LearningRate/Discriminator', 
+                                 self.discriminator_optimizer.param_groups[0]['lr'], 
+                                 self.step_count)
+            
             self.step_count += 1
             
-        return generator_loss.item(), discriminator_loss.item()
+        return generator_loss.item(), discriminator_loss_total / n_critic
     
     @torch.no_grad()   
     def test(self, inputs, direction):

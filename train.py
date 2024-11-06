@@ -40,7 +40,7 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
 
     # Hyperparameters
     if n_frames == 128:
-        num_epochs = 300  # More epochs for foundational training
+        num_epochs = 250  # More epochs for foundational training
     elif n_frames == 256:
         num_epochs = 150  # Medium context refinement
     elif n_frames == 380:
@@ -49,10 +49,8 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
         num_epochs = 500  # Default case
 
     mini_batch_size = 1  
-    generator_learning_rate = 0.0002
-    generator_learning_rate_decay = generator_learning_rate / 5000000
-    discriminator_learning_rate = 0.00005
-    discriminator_learning_rate_decay = discriminator_learning_rate / 5000000
+    initial_generator_lr = 0.0002
+    initial_discriminator_lr = 0.0001
     sampling_rate = 24000
     num_mcep = 24
     frame_period = 5.0
@@ -101,46 +99,54 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
     print(f'Preprocessing Done. Time Elapsed: {int(time_elapsed) // 3600:02d}:{(int(time_elapsed) % 3600) // 60:02d}:{(int(time_elapsed) % 60):02d}')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # Initialize CycleGAN model
-    model = CycleGAN(num_features=num_mcep, log_dir=tensorboard_log_dir + str(n_frames)).to(device)
+    model = CycleGAN(
+        num_features=num_mcep, 
+        log_dir=tensorboard_log_dir + str(n_frames),
+        initial_generator_lr=initial_generator_lr,
+        initial_discriminator_lr=initial_discriminator_lr
+    ).to(device)
+    #model = CycleGAN(num_features=num_mcep, log_dir=tensorboard_log_dir + str(n_frames)).to(device)
     if n_frames != 128:
         model.load(os.path.join(model_dir, model_name))
     # Create dataset and dataloader
     dataset = VoiceDataset(coded_sps_A_norm, coded_sps_B_norm, n_frames=n_frames)
     dataloader = DataLoader(dataset, batch_size=mini_batch_size, shuffle=True, num_workers=2)
+
     for epoch in range(num_epochs):
         print(f'Epoch: {epoch}')
 
         start_time_epoch = time.time()
-
-        # Sample training data
-        dataset_A, dataset_B = sample_train_data(dataset_A=coded_sps_A_norm, dataset_B=coded_sps_B_norm, n_frames=n_frames)
-        n_samples = dataset_A.shape[0]
- # Training loop
-    for epoch in range(num_epochs):
-        print('Epoch: %d' % epoch)
-        start_time_epoch = time.time()
+        running_generator_loss = 0
+        running_discriminator_loss = 0
 
         for i, (real_A, real_B) in enumerate(dataloader):
             num_iterations = len(dataloader) * epoch + i
 
+           # Adjust hyperparameters based on iterations
+            current_lambda_identity = lambda_identity
             if num_iterations > 100000:
-                lambda_identity = 0.5
-            if num_iterations > 100000:
-                generator_learning_rate = max(0.00001, generator_learning_rate - generator_learning_rate_decay)
-                discriminator_learning_rate = max(0.00001, discriminator_learning_rate - discriminator_learning_rate_decay)
+                current_lambda_identity = 0.5
 
             generator_loss, discriminator_loss = model.train_step(
                 real_A, real_B,
                 lambda_cycle=lambda_cycle,
-                lambda_identity=lambda_identity,
-                generator_learning_rate=generator_learning_rate,
-                discriminator_learning_rate=discriminator_learning_rate
+                lambda_identity=current_lambda_identity
             )
+            running_generator_loss += generator_loss
+            running_discriminator_loss += discriminator_loss
 
             if i % 200 == 0:
+                current_gen_lr = model.generator_optimizer.param_groups[0]['lr']
+                current_disc_lr = model.discriminator_optimizer.param_groups[0]['lr']
                 print('Iteration: {:07d}, Generator Learning Rate: {:.7f}, Discriminator Learning Rate: {:.7f}, '
                       'Generator Loss : {:.6f}, Discriminator Loss : {:.6f}'.format(
-                    num_iterations, generator_learning_rate, discriminator_learning_rate, generator_loss, discriminator_loss))
+                    num_iterations, current_gen_lr, current_disc_lr, generator_loss, discriminator_loss))
+                
+        # Calculate epoch averages
+        avg_generator_loss = running_generator_loss / len(dataloader)
+        avg_discriminator_loss = running_discriminator_loss / len(dataloader)
+        print(f'Epoch {epoch} Average Losses - Generator: {avg_generator_loss:.4f}, Discriminator: {avg_discriminator_loss:.4f}')
+
 
         model.save(directory=model_dir, filename=f'{n_frames}_{model_name}')
 
