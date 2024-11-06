@@ -22,12 +22,24 @@ def gated_linear_layer(inputs, gates):
 
 
 class instance_norm_layer(nn.Module):
-    def __init__(self, num_features, epsilon=1e-06, activation=None, name = None, is_2d=True):
+    def __init__(self, num_features, epsilon=1e-06, activation=None, is_2d=True):
         super(instance_norm_layer, self).__init__()
         if is_2d:
-            self.instance_norm = nn.InstanceNorm2d(num_features, eps=epsilon, affine=False)
+            self.instance_norm = nn.InstanceNorm2d(
+                num_features=num_features,
+                eps=epsilon,
+                affine=True,
+                track_running_stats=False
+            )
         else:
-            self.instance_norm = nn.InstanceNorm1d(num_features, eps=epsilon, affine=False)
+            self.instance_norm = nn.InstanceNorm1d(
+                num_features=num_features,
+                eps=epsilon,
+                affine=True,
+                track_running_stats=False
+            )
+        self.instance_norm.weight = nn.Parameter(torch.ones(num_features))
+        self.instance_norm.bias = nn.Parameter(torch.zeros(num_features))
         self.activation = activation
 
     def forward(self, inputs):
@@ -159,7 +171,7 @@ class residual1d_block(nn.Module):
         self.norm1 = instance_norm_layer(
             num_features=filters,
             activation=True,
-            name=name_prefix + 'h1_norm'
+            is_2d=False
         )
         #Parallel path for gates
         self.conv1_gates = conv1d_layer(
@@ -173,7 +185,7 @@ class residual1d_block(nn.Module):
         self.norm1_gates = instance_norm_layer(
             num_features=filters,
             activation=True,
-            name=name_prefix + 'h1_norm_gates'
+            is_2d=False
         )
 
         #Second Conv layer with half the filters
@@ -188,7 +200,7 @@ class residual1d_block(nn.Module):
         self.norm2 = instance_norm_layer(
             num_features=filters // 2,
             activation=True,
-            name=name_prefix + 'h2_norm'
+            is_2d=False
         )
         
     
@@ -232,6 +244,7 @@ class downsample1d_block(nn.Module):
         self.norm1 = instance_norm_layer(
             num_features=filters,
             activation=True,
+            is_2d=False
         )
         self.conv1_gates = conv1d_layer(
             inputs=in_channels, 
@@ -242,7 +255,8 @@ class downsample1d_block(nn.Module):
         )
         self.norm1_gates = instance_norm_layer(
             num_features=filters, 
-            activation=True
+            activation=True,
+            is_2d=False
         )
 
     def forward(self, x):
@@ -280,7 +294,8 @@ class upsample1d_block(nn.Module):
         # Instance Normalization for the main path
         self.norm1 = instance_norm_layer(
             num_features=filters // shuffle_size,
-            activation=True
+            activation=True,
+            is_2d=False
         )
         
         # Gating path
@@ -294,7 +309,8 @@ class upsample1d_block(nn.Module):
         self.pixel_shuffle_gates = pixel_shuffler(shuffle_size)
         self.norm1_gates = instance_norm_layer(
             num_features=filters // shuffle_size,
-            activation=True
+            activation=True,
+            is_2d=False
         )
 
     def forward(self, x):

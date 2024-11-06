@@ -29,6 +29,18 @@ class VoiceDataset(Dataset):
         
         return (torch.FloatTensor(self.coded_sps_A_norm[idx][:, start_A:end_A]), 
                 torch.FloatTensor(self.coded_sps_B_norm[idx][:, start_B:end_B]))
+    
+def pad_coded_sp(coded_sp, target_length=None):
+    if target_length is None:
+        return coded_sp
+        
+    current_length = coded_sp.shape[1]
+    if current_length > target_length:
+        return coded_sp[:, :target_length]
+    elif current_length < target_length:
+        pad_width = ((0, 0), (0, target_length - current_length))
+        return np.pad(coded_sp, pad_width, mode='constant', constant_values=0)
+    return coded_sp
 
 def preprocess(train_A_dir, train_B_dir, cache_dir, sampling_rate, frame_period, num_mcep):
     os.makedirs(cache_dir, exist_ok=True) #create if doesnt exist
@@ -64,10 +76,22 @@ def preprocess(train_A_dir, train_B_dir, cache_dir, sampling_rate, frame_period,
     coded_sps_A_transposed = transpose_in_list(lst=coded_sps_A)
     coded_sps_B_transposed = transpose_in_list(lst=coded_sps_B)
 
+    # Find the maximum length in both datasets
+    max_len_A = max(sp.shape[1] for sp in coded_sps_A_transposed)
+    max_len_B = max(sp.shape[1] for sp in coded_sps_B_transposed)
+    target_length = max(max_len_A, max_len_B)
+
+    # Pad all spectrograms to the same length
+    coded_sps_A_padded = [pad_coded_sp(sp, target_length) for sp in coded_sps_A_transposed]
+    coded_sps_B_padded = [pad_coded_sp(sp, target_length) for sp in coded_sps_B_transposed]
+    coded_sps_A_padded = np.array(coded_sps_A_padded)
+    coded_sps_B_padded = np.array(coded_sps_B_padded)
+
+    # Normalize the padded spectrograms
     coded_sps_A_norm, coded_sps_A_mean, coded_sps_A_std = coded_sps_normalization_fit_transoform(
-        coded_sps=coded_sps_A_transposed)
+        coded_sps=coded_sps_A_padded)
     coded_sps_B_norm, coded_sps_B_mean, coded_sps_B_std = coded_sps_normalization_fit_transoform(
-        coded_sps=coded_sps_B_transposed)
+        coded_sps=coded_sps_B_padded)
 
     # Cache the preprocessed data
     np.savez(cache_file,
@@ -91,6 +115,19 @@ def preprocess(train_A_dir, train_B_dir, cache_dir, sampling_rate, frame_period,
             log_f0s_mean_B, log_f0s_std_B,
             coded_sps_A_mean, coded_sps_A_std,
             coded_sps_B_mean, coded_sps_B_std)
+
+def test_model_conversion(model, coded_sp_norm, device):
+    """
+    Efficiently convert voice using the trained model
+    """
+    # Convert to numpy array first, then to tensor - more efficient
+    coded_sp_norm = np.array([coded_sp_norm], dtype=np.float32)
+    tensor_input = torch.from_numpy(coded_sp_norm).to(device)
+    
+    with torch.no_grad():
+        converted = model.test(inputs=tensor_input, direction='A2B')
+    
+    return converted.cpu().numpy()[0]
 
 def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validation_A_dir, validation_B_dir, output_dir, tensorboard_log_dir, n_frames):
     
@@ -209,7 +246,7 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
                 coded_sp = world_encode_spectral_envelop(sp=sp, fs=sampling_rate, dim=num_mcep)
                 coded_sp_transposed = coded_sp.T
                 coded_sp_norm = (coded_sp_transposed - coded_sps_A_mean) / coded_sps_A_std
-                coded_sp_converted_norm = model.test(inputs=torch.tensor([coded_sp_norm], dtype=torch.float32).to(device), direction='A2B').cpu().numpy()[0]
+                coded_sp_converted_norm = test_model_conversion(model, coded_sp_norm, device)
                 coded_sp_converted = coded_sp_converted_norm * coded_sps_B_std + coded_sps_B_mean
                 coded_sp_converted = coded_sp_converted.T
                 coded_sp_converted = np.ascontiguousarray(coded_sp_converted)
