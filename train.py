@@ -186,8 +186,6 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
         initial_discriminator_lr=initial_discriminator_lr
     ).to(device)
 
-    # Setup schedulers with proper total_steps
-    model.setup_schedulers(dataloader, num_epochs)
     #model = CycleGAN(num_features=num_mcep, log_dir=tensorboard_log_dir + str(n_frames)).to(device)
     if n_frames != 128:
         model.load(os.path.join(model_dir, model_name))
@@ -195,6 +193,9 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
     dataset = VoiceDataset(coded_sps_A_norm, coded_sps_B_norm, n_frames=n_frames)
     dataloader = DataLoader(dataset, batch_size=mini_batch_size, shuffle=True, num_workers=2)
 
+    # Setup schedulers with proper total_steps
+    model.setup_schedulers(dataloader, num_epochs)
+    
     for epoch in range(num_epochs):
         print(f'Epoch: {epoch}')
 

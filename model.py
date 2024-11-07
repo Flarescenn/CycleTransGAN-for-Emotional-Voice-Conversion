@@ -36,6 +36,7 @@ class CycleGAN(nn.Module):
 
         self.generator_scheduler = None
         self.discriminator_scheduler = None
+
         '''# Initialize schedulers
         self.generator_scheduler = CosineAnnealingWarmRestarts(
             self.generator_optimizer, T_0=50000, T_mult=2, eta_min=1e-6
@@ -78,7 +79,7 @@ class CycleGAN(nn.Module):
             final_div_factor=100
         )
 
-    '''def compute_gradient_penalty(self, discriminator, real_samples, fake_samples):
+    def compute_gradient_penalty(self, discriminator, real_samples, fake_samples):
         batch_size = real_samples.size(0)
         alpha = torch.rand(batch_size, 1, 1).to(self.device)
         
@@ -86,12 +87,10 @@ class CycleGAN(nn.Module):
         interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad_(True)
         d_interpolates = discriminator(interpolates)
         
-        # Compute gradients
-        fake = torch.ones(d_interpolates.size()).to(self.device)
         gradients = torch.autograd.grad(
             outputs=d_interpolates,
             inputs=interpolates,
-            grad_outputs=fake,
+            grad_outputs=torch.ones_like(d_interpolates).to(self.device),
             create_graph=True,
             retain_graph=True,
             only_inputs=True
@@ -100,7 +99,7 @@ class CycleGAN(nn.Module):
         # Calculate gradient penalty
         gradients = gradients.view(batch_size, -1)
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-        return gradient_penalty'''
+        return gradient_penalty
 
     def forward(self, input_A, input_B):
         self.real_A = input_A
@@ -147,18 +146,26 @@ class CycleGAN(nn.Module):
         return self.loss_G
 
     def compute_discriminator_losses(self):
-        # Wasserstein losses without gradient penalty
-        self.loss_D_A = (
+        # Wasserstein losses
+        self.loss_D_A_wasserstein = (
             -torch.mean(self.discriminator_A(self.real_A)) +
             torch.mean(self.discriminator_A(self.fake_A.detach()))
-            )
-        
-        
-        self.loss_D_B = (
+            )        
+        self.loss_D_B_wasserstein = (
             -torch.mean(self.discriminator_B(self.real_B)) +
             torch.mean(self.discriminator_B(self.fake_B.detach())))          
         
+        self.gradient_penalty_A = self.compute_gradient_penalty(
+            self.discriminator_A, self.real_A, self.fake_A.detach()
+        )
+        self.gradient_penalty_B = self.compute_gradient_penalty(
+            self.discriminator_B, self.real_B, self.fake_B.detach()
+        )
         
+        #Wasserstein losses with gradient penalties (lambda = 1)
+        self.loss_D_A = self.loss_D_A_wasserstein + self.gradient_penalty_A
+        self.loss_D_B = self.loss_D_B_wasserstein + self.gradient_penalty_B
+
         self.loss_D = self.loss_D_A + self.loss_D_B
         return self.loss_D
 
@@ -167,24 +174,22 @@ class CycleGAN(nn.Module):
         self.real_A = input_A.to(self.device)
         self.real_B = input_B.to(self.device)
         
-        # Generator forward and backward pass
         self.generator_optimizer.zero_grad()
         self(self.real_A, self.real_B)  # Forward pass
         loss_G = self.compute_generator_losses(lambda_cycle, lambda_identity)
         loss_G.backward()
         self.generator_optimizer.step()
         
-        # Discriminator forward and backward pass
         self.discriminator_optimizer.zero_grad()
         loss_D = self.compute_discriminator_losses()
         loss_D.backward()
         self.discriminator_optimizer.step()
         
-        # Update learning rates
+        # Updating learning rates
         self.generator_scheduler.step()
         self.discriminator_scheduler.step()
         
-        # Log losses
+        # Log losses 
         if self.mode == 'train':
             self.writer.add_scalar('Generator/Total', loss_G.item(), self.step_count)
             self.writer.add_scalar('Generator/A2B', self.loss_G_A2B.item(), self.step_count)
