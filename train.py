@@ -185,6 +185,9 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
         initial_generator_lr=initial_generator_lr,
         initial_discriminator_lr=initial_discriminator_lr
     ).to(device)
+
+    # Setup schedulers with proper total_steps
+    model.setup_schedulers(dataloader, num_epochs)
     #model = CycleGAN(num_features=num_mcep, log_dir=tensorboard_log_dir + str(n_frames)).to(device)
     if n_frames != 128:
         model.load(os.path.join(model_dir, model_name))
@@ -234,8 +237,8 @@ def train(train_A_dir, train_B_dir, model_dir, model_name, random_seed, validati
         time_elapsed_epoch = end_time_epoch - start_time_epoch
         print(f'Time Elapsed for This Epoch: {int(time_elapsed_epoch) // 3600:02d}:{(int(time_elapsed_epoch) % 3600) // 60:02d}:{(int(time_elapsed_epoch) % 60):02d}')
 
-        # Generate validation data every 10 epochs
-        if validation_A_dir is not None and epoch % 10 == 0:
+        # Generate validation data every 30 epochs
+        if validation_A_dir is not None and epoch % 30 == 0:
             print('Generating Validation Data B from A...')
             for file in os.listdir(validation_A_dir):
                 filepath = os.path.join(validation_A_dir, file)
